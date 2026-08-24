@@ -1,457 +1,46 @@
 const express = require("express");
+const { createProxyMiddleware } = require("http-proxy-middleware");
 
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 
-const MAX_REDIRECTS = 5;
-const FETCH_TIMEOUT = 30000;
-
-
 /*
 ==================================================
-安全检查
+基本安全检查
 ==================================================
 */
 
-function isPrivateHostname(hostname) {
-    const host = hostname.toLowerCase();
-
-    return (
-        host === "localhost" ||
-        host.endsWith(".localhost") ||
-        host === "127.0.0.1" ||
-        host === "::1" ||
-        host === "0.0.0.0" ||
-        host === "metadata.google.internal" ||
-        host === "metadata.google.com"
-    );
-}
-
-
-function isAllowedUrl(value) {
-
-    let url;
-
+function isValidTarget(value) {
     try {
-        url = new URL(value);
+        const url = new URL(value);
+
+        return (
+            url.protocol === "http:" ||
+            url.protocol === "https:"
+        );
     } catch {
         return false;
     }
-
-    if (
-        url.protocol !== "http:" &&
-        url.protocol !== "https:"
-    ) {
-        return false;
-    }
-
-    if (isPrivateHostname(url.hostname)) {
-        return false;
-    }
-
-    return true;
 }
 
 
 /*
 ==================================================
-把用户输入变成 URL
+把目标 URL 转成当前 Proxy 的 URL
 ==================================================
 */
 
-function normalizeUrl(value) {
-
-    value = value.trim();
-
-    if (!value) {
-        throw new Error("Empty URL");
-    }
-
-    if (!/^https?:\/\//i.test(value)) {
-        value = "https://" + value;
-    }
-
-    const url = new URL(value);
-
-    if (!isAllowedUrl(url.href)) {
-        throw new Error("URL not allowed");
-    }
-
-    return url.href;
-}
-
-
-/*
-==================================================
-安全 Fetch
-==================================================
-*/
-
-async function fetchTarget(startUrl) {
-
-    let currentUrl = startUrl;
-
-    for (let i = 0; i <= MAX_REDIRECTS; i++) {
-
-        if (!isAllowedUrl(currentUrl)) {
-            throw new Error("Redirect target not allowed");
-        }
-
-        const controller = new AbortController();
-
-        const timeout = setTimeout(
-            () => controller.abort(),
-            FETCH_TIMEOUT
-        );
-
-        let response;
-
-        try {
-
-            response = await fetch(currentUrl, {
-                redirect: "manual",
-
-                signal: controller.signal,
-
-                headers: {
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150 Safari/537.36",
-
-                    "Accept":
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-
-                    "Accept-Language":
-                        "en-US,en;q=0.9"
-                }
-            });
-
-        } finally {
-
-            clearTimeout(timeout);
-
-        }
-
-
-        /*
-        处理 Redirect
-        */
-
-        if (
-            response.status >= 300 &&
-            response.status < 400
-        ) {
-
-            const location =
-                response.headers.get("location");
-
-            if (!location) {
-                return {
-                    response,
-                    finalUrl: currentUrl
-                };
-            }
-
-            const nextUrl =
-                new URL(
-                    location,
-                    currentUrl
-                ).href;
-
-            currentUrl = nextUrl;
-
-            continue;
-        }
-
-
-        return {
-            response,
-            finalUrl: currentUrl
-        };
-    }
-
-    throw new Error("Too many redirects");
-}
-
-
-/*
-==================================================
-Proxy URL
-==================================================
-*/
-
-function proxyUrl(targetUrl, req, mode = "resource") {
-
+function proxyUrl(target, req, type = "asset") {
     const protocol =
         req.headers["x-forwarded-proto"] || "https";
 
-    const host =
-        req.headers.host;
+    const host = req.headers.host;
 
     return (
-        `${protocol}://${host}/` +
-        `${mode}?url=` +
-        encodeURIComponent(targetUrl)
+        `${protocol}://${host}/${type}?url=` +
+        encodeURIComponent(target)
     );
-}
-
-
-/*
-==================================================
-重写 HTML
-==================================================
-*/
-
-function rewriteHtml(html, baseUrl, req) {
-
-    const originalBase =
-        new URL(baseUrl);
-
-
-    /*
-    href
-    src
-    action
-    poster
-    */
-
-    html = html.replace(
-        /(href|src|action|poster)\s*=\s*(["'])(.*?)\2/gi,
-
-        function(match, attribute, quote, value) {
-
-            const trimmed = value.trim();
-
-            /*
-            不处理：
-            #anchor
-            data:
-            javascript:
-            mailto:
-            tel:
-            */
-
-            if (
-                trimmed.startsWith("#") ||
-                /^(data|javascript|mailto|tel):/i.test(trimmed)
-            ) {
-                return match;
-            }
-
-            try {
-
-                const absolute =
-                    new URL(
-                        trimmed,
-                        originalBase
-                    ).href;
-
-                if (!/^https?:/i.test(absolute)) {
-                    return match;
-                }
-
-                return (
-                    `${attribute}=${quote}` +
-                    proxyUrl(
-                        absolute,
-                        req,
-                        "view"
-                    ) +
-                    `${quote}`
-                );
-
-            } catch {
-
-                return match;
-
-            }
-        }
-    );
-
-
-    /*
-    srcset
-    */
-
-    html = html.replace(
-        /(srcset)\s*=\s*(["'])(.*?)\2/gi,
-
-        function(match, attribute, quote, value) {
-
-            const parts =
-                value.split(",");
-
-            const rewritten =
-                parts.map(part => {
-
-                    const bits =
-                        part.trim().split(/\s+/);
-
-                    if (!bits[0]) {
-                        return part;
-                    }
-
-                    try {
-
-                        const absolute =
-                            new URL(
-                                bits[0],
-                                originalBase
-                            ).href;
-
-                        if (
-                            !/^https?:/i.test(
-                                absolute
-                            )
-                        ) {
-                            return part;
-                        }
-
-                        bits[0] =
-                            proxyUrl(
-                                absolute,
-                                req,
-                                "resource"
-                            );
-
-                        return bits.join(" ");
-
-                    } catch {
-
-                        return part;
-
-                    }
-
-                }).join(", ");
-
-            return (
-                `${attribute}=${quote}` +
-                rewritten +
-                `${quote}`
-            );
-        }
-    );
-
-
-    /*
-    CSS inline style：
-
-    style="background-image:url(...)"
-    */
-
-    html = html.replace(
-        /url\(\s*(["']?)(.*?)\1\s*\)/gi,
-
-        function(match, quote, value) {
-
-            const trimmed =
-                value.trim();
-
-            if (
-                trimmed.startsWith("data:") ||
-                trimmed.startsWith("#")
-            ) {
-                return match;
-            }
-
-            try {
-
-                const absolute =
-                    new URL(
-                        trimmed,
-                        originalBase
-                    ).href;
-
-                if (
-                    !/^https?:/i.test(
-                        absolute
-                    )
-                ) {
-                    return match;
-                }
-
-                return (
-                    `url("${proxyUrl(
-                        absolute,
-                        req,
-                        "resource"
-                    )}")`
-                );
-
-            } catch {
-
-                return match;
-
-            }
-        }
-    );
-
-
-    return html;
-}
-
-
-/*
-==================================================
-重写 CSS
-==================================================
-*/
-
-function rewriteCss(css, baseUrl, req) {
-
-    const originalBase =
-        new URL(baseUrl);
-
-
-    css = css.replace(
-        /url\(\s*(["']?)(.*?)\1\s*\)/gi,
-
-        function(match, quote, value) {
-
-            const trimmed =
-                value.trim();
-
-            if (
-                trimmed.startsWith("data:") ||
-                trimmed.startsWith("#")
-            ) {
-                return match;
-            }
-
-            try {
-
-                const absolute =
-                    new URL(
-                        trimmed,
-                        originalBase
-                    ).href;
-
-                if (
-                    !/^https?:/i.test(
-                        absolute
-                    )
-                ) {
-                    return match;
-                }
-
-                return (
-                    `url("${proxyUrl(
-                        absolute,
-                        req,
-                        "resource"
-                    )}")`
-                );
-
-            } catch {
-
-                return match;
-
-            }
-        }
-    );
-
-
-    return css;
 }
 
 
@@ -465,8 +54,7 @@ app.get("/", (req, res) => {
 
     res.send(`
 <!DOCTYPE html>
-
-<html>
+<html lang="en">
 
 <head>
 
@@ -486,121 +74,87 @@ app.get("/", (req, res) => {
 }
 
 body {
-
     margin: 0;
-
     min-height: 100vh;
 
     display: flex;
-
     justify-content: center;
-
     align-items: center;
 
     background: #111;
-
     color: white;
 
     font-family: Arial, sans-serif;
-
 }
 
 .container {
-
     width: min(700px, 90%);
-
     text-align: center;
-
 }
 
 h1 {
-
     font-size: 32px;
-
     margin-bottom: 30px;
-
 }
 
 .form {
-
     display: flex;
-
     gap: 10px;
-
 }
 
 input {
-
     flex: 1;
-
     min-width: 0;
 
     padding: 15px;
 
     border: 1px solid #444;
-
     border-radius: 8px;
 
     background: #222;
-
     color: white;
 
     font-size: 16px;
-
     outline: none;
-
 }
 
 input:focus {
-
     border-color: #888;
-
 }
 
 button {
-
     padding: 15px 25px;
 
     border: none;
-
     border-radius: 8px;
 
     background: white;
-
     color: black;
 
     font-size: 16px;
-
     font-weight: bold;
 
     cursor: pointer;
-
 }
 
 button:hover {
-
     background: #ddd;
-
 }
 
 #error {
+    display: none;
 
     margin-top: 15px;
 
     color: #ff5555;
-
-    display: none;
-
 }
 
 .hint {
-
     margin-top: 20px;
 
     color: #777;
 
     font-size: 13px;
-
 }
 
 </style>
@@ -613,7 +167,7 @@ button:hover {
 
 <h1>Web Proxy</h1>
 
-<form id="form">
+<form id="proxyForm">
 
 <div class="form">
 
@@ -644,7 +198,7 @@ Enter a website URL
 <script>
 
 const form =
-    document.getElementById("form");
+    document.getElementById("proxyForm");
 
 const input =
     document.getElementById("url");
@@ -653,58 +207,53 @@ const error =
     document.getElementById("error");
 
 
-form.addEventListener(
-    "submit",
-    function(event) {
+form.addEventListener("submit", function(event) {
 
-        event.preventDefault();
+    event.preventDefault();
 
-        let value =
-            input.value.trim();
+    let value =
+        input.value.trim();
 
-        if (!value) {
-            return;
-        }
+    if (!value) {
+        return;
+    }
+
+
+    /*
+    自动添加 https://
+    */
+
+    if (!/^https?:\\/\\//i.test(value)) {
+        value = "https://" + value;
+    }
+
+
+    try {
+
+        const url = new URL(value);
 
         if (
-            !/^https?:\\/\\//i.test(value)
+            url.protocol !== "http:" &&
+            url.protocol !== "https:"
         ) {
-            value =
-                "https://" + value;
+            throw new Error();
         }
 
-        try {
 
-            const url =
-                new URL(value);
+        window.location.href =
+            "/go?url=" +
+            encodeURIComponent(url.href);
 
-            if (
-                url.protocol !== "http:" &&
-                url.protocol !== "https:"
-            ) {
+    } catch {
 
-                throw new Error();
+        error.textContent =
+            "Invalid URL.";
 
-            }
-
-            window.location.href =
-                "/view?url=" +
-                encodeURIComponent(
-                    url.href
-                );
-
-        } catch {
-
-            error.textContent =
-                "Invalid URL.";
-
-            error.style.display =
-                "block";
-
-        }
-
+        error.style.display =
+            "block";
     }
-);
+
+});
 
 </script>
 
@@ -718,247 +267,743 @@ form.addEventListener(
 
 /*
 ==================================================
-Health check
+Health Check
 ==================================================
 */
 
 app.get("/health", (req, res) => {
-
     res.status(200).send("OK");
-
 });
 
 
 /*
 ==================================================
-网页代理
+通用网页 Proxy
 ==================================================
 */
 
-app.get("/view", async (req, res) => {
+app.use(
+    "/go",
+    async (req, res, next) => {
 
-    try {
+        const target =
+            req.query.url;
 
-        const inputUrl =
-            normalizeUrl(
-                req.query.url || ""
-            );
+        if (!target || !isValidTarget(target)) {
 
+            return res
+                .status(400)
+                .send("Invalid URL");
 
-        const {
-            response,
-            finalUrl
-        } =
-            await fetchTarget(
-                inputUrl
-            );
+        }
 
 
-        const contentType =
-            response.headers.get(
-                "content-type"
-            ) || "";
+        let targetUrl;
+
+        try {
+            targetUrl = new URL(target);
+        } catch {
+            return res
+                .status(400)
+                .send("Invalid URL");
+        }
 
 
         /*
-        HTML
+        把请求交给 http-proxy-middleware
         */
 
-        if (
-            contentType.includes(
-                "text/html"
-            )
-        ) {
+        createProxyMiddleware({
 
-            let html =
-                await response.text();
+            target: targetUrl.origin,
+
+            changeOrigin: true,
+
+            secure: true,
+
+            followRedirects: true,
+
+            selfHandleResponse: true,
 
 
-            html =
-                rewriteHtml(
-                    html,
-                    finalUrl,
-                    req
+            pathRewrite: () => {
+
+                return (
+                    targetUrl.pathname +
+                    targetUrl.search
                 );
 
-
-            res.status(
-                response.status
-            );
-
-            res.setHeader(
-                "Content-Type",
-                "text/html; charset=utf-8"
-            );
-
-            res.setHeader(
-                "Cache-Control",
-                "no-cache"
-            );
-
-            return res.send(html);
-        }
+            },
 
 
-        /*
-        CSS
-        */
+            on: {
 
-        if (
-            contentType.includes(
-                "text/css"
-            )
-        ) {
+                proxyReq(proxyReq) {
 
-            let css =
-                await response.text();
+                    proxyReq.setHeader(
+                        "User-Agent",
+                        req.headers["user-agent"] ||
+                        "Mozilla/5.0"
+                    );
 
+                    proxyReq.setHeader(
+                        "Accept-Language",
+                        req.headers["accept-language"] ||
+                        "en-US,en;q=0.9"
+                    );
 
-            css =
-                rewriteCss(
-                    css,
-                    finalUrl,
-                    req
-                );
+                    proxyReq.setHeader(
+                        "Referer",
+                        targetUrl.origin + "/"
+                    );
 
-
-            res.status(
-                response.status
-            );
-
-            res.setHeader(
-                "Content-Type",
-                contentType
-            );
-
-            return res.send(css);
-        }
+                },
 
 
-        /*
-        其他资源
-        */
+                async proxyRes(
+                    proxyRes,
+                    req,
+                    res
+                ) {
 
-        const buffer =
-            Buffer.from(
-                await response.arrayBuffer()
-            );
+                    /*
+                    ==========================================
+                    删除阻止嵌入的 Header
+                    ==========================================
+                    */
 
+                    delete proxyRes.headers[
+                        "x-frame-options"
+                    ];
 
-        res.status(
-            response.status
-        );
+                    delete proxyRes.headers[
+                        "content-security-policy"
+                    ];
 
-
-        if (contentType) {
-
-            res.setHeader(
-                "Content-Type",
-                contentType
-            );
-
-        }
-
-
-        res.setHeader(
-            "Cache-Control",
-            "public, max-age=3600"
-        );
+                    delete proxyRes.headers[
+                        "content-security-policy-report-only"
+                    ];
 
 
-        return res.send(buffer);
+                    /*
+                    ==========================================
+                    Cookie
+                    ==========================================
+                    */
 
-    } catch (error) {
+                    if (
+                        proxyRes.headers["set-cookie"]
+                    ) {
 
-        console.error(
-            "Proxy error:",
-            error
-        );
+                        proxyRes.headers["set-cookie"] =
+                            proxyRes.headers[
+                                "set-cookie"
+                            ].map(cookie =>
+                                cookie
+                                    .replace(
+                                        /;\s*Domain=[^;]+/i,
+                                        ""
+                                    )
+                                    .replace(
+                                        /;\s*Secure/gi,
+                                        ""
+                                    )
+                            );
+
+                    }
 
 
-        return res
-            .status(500)
-            .send(`
-                <h1>Proxy Error</h1>
-                <pre>${String(
-                    error.message
-                )}</pre>
-            `);
+                    /*
+                    ==========================================
+                    获取 Content-Type
+                    ==========================================
+                    */
+
+                    const contentType =
+                        proxyRes.headers[
+                            "content-type"
+                        ] || "";
+
+
+                    /*
+                    ==========================================
+                    如果不是 HTML / CSS
+                    直接返回原始资源
+                    ==========================================
+                    */
+
+                    if (
+                        !contentType.includes(
+                            "text/html"
+                        ) &&
+                        !contentType.includes(
+                            "text/css"
+                        )
+                    ) {
+
+                        return;
+
+                    }
+
+
+                    /*
+                    ==========================================
+                    HTML / CSS 需要修改
+                    ==========================================
+                    */
+
+                    const chunks = [];
+
+                    proxyRes.on(
+                        "data",
+                        chunk => {
+                            chunks.push(chunk);
+                        }
+                    );
+
+
+                    proxyRes.on(
+                        "end",
+                        () => {
+
+                            let body =
+                                Buffer.concat(
+                                    chunks
+                                ).toString("utf8");
+
+
+                            /*
+                            ==================================
+                            HTML
+                            ==================================
+                            */
+
+                            if (
+                                contentType.includes(
+                                    "text/html"
+                                )
+                            ) {
+
+                                body =
+                                    rewriteHTML(
+                                        body,
+                                        targetUrl.href,
+                                        req
+                                    );
+
+                            }
+
+
+                            /*
+                            ==================================
+                            CSS
+                            ==================================
+                            */
+
+                            else if (
+                                contentType.includes(
+                                    "text/css"
+                                )
+                            ) {
+
+                                body =
+                                    rewriteCSS(
+                                        body,
+                                        targetUrl.href,
+                                        req
+                                    );
+
+                            }
+
+
+                            /*
+                            ==================================
+                            删除压缩 Header
+                            ==================================
+                            */
+
+                            delete res
+                                .getHeaders()[
+                                    "content-encoding"
+                                ];
+
+
+                            res.setHeader(
+                                "Content-Type",
+                                contentType
+                            );
+
+
+                            res.send(body);
+
+                        }
+                    );
+
+                }
+
+            }
+
+        })(req, res, next);
 
     }
-
-});
+);
 
 
 /*
 ==================================================
-资源代理
+资源 Proxy
 ==================================================
 */
 
-app.get("/resource", async (req, res) => {
+app.get(
+    "/asset",
+    (req, res) => {
 
-    try {
+        const target =
+            req.query.url;
 
-        const inputUrl =
-            normalizeUrl(
-                req.query.url || ""
-            );
+        if (!target || !isValidTarget(target)) {
 
-
-        const {
-            response
-        } =
-            await fetchTarget(
-                inputUrl
-            );
-
-
-        const contentType =
-            response.headers.get(
-                "content-type"
-            );
-
-
-        if (contentType) {
-
-            res.setHeader(
-                "Content-Type",
-                contentType
-            );
+            return res
+                .status(400)
+                .send("Invalid asset URL");
 
         }
 
 
-        res.setHeader(
-            "Cache-Control",
-            "public, max-age=3600"
-        );
+        let targetUrl;
+
+        try {
+            targetUrl = new URL(target);
+        } catch {
+            return res
+                .status(400)
+                .send("Invalid asset URL");
+        }
 
 
-        const buffer =
-            Buffer.from(
-                await response.arrayBuffer()
-            );
+        createProxyMiddleware({
+
+            target: targetUrl.origin,
+
+            changeOrigin: true,
+
+            secure: true,
+
+            followRedirects: true,
+
+            pathRewrite: () => {
+
+                return (
+                    targetUrl.pathname +
+                    targetUrl.search
+                );
+
+            },
 
 
-        return res.send(buffer);
+            on: {
 
-    } catch (error) {
+                proxyReq(proxyReq) {
 
-        console.error(
-            "Resource error:",
-            error
-        );
+                    proxyReq.setHeader(
+                        "User-Agent",
+                        "Mozilla/5.0"
+                    );
+
+                    proxyReq.setHeader(
+                        "Referer",
+                        targetUrl.origin + "/"
+                    );
+
+                },
 
 
-        return res
-            .status(500)
-            .send("Resource error");
+                proxyRes(proxyRes) {
+
+                    /*
+                    删除限制
+                    */
+
+                    delete proxyRes.headers[
+                        "x-frame-options"
+                    ];
+
+                    delete proxyRes.headers[
+                        "content-security-policy"
+                    ];
+
+                    /*
+                    Cookie
+                    */
+
+                    if (
+                        proxyRes.headers["set-cookie"]
+                    ) {
+
+                        proxyRes.headers["set-cookie"] =
+                            proxyRes.headers[
+                                "set-cookie"
+                            ].map(cookie =>
+                                cookie
+                                    .replace(
+                                        /;\s*Domain=[^;]+/i,
+                                        ""
+                                    )
+                                    .replace(
+                                        /;\s*Secure/gi,
+                                        ""
+                                    )
+                            );
+
+                    }
+
+                }
+
+            }
+
+        })(req, res);
 
     }
+);
 
-});
+
+/*
+==================================================
+HTML URL 重写
+==================================================
+*/
+
+function rewriteHTML(
+    html,
+    baseUrl,
+    req
+) {
+
+    const base =
+        new URL(baseUrl);
+
+
+    /*
+    ==============================================
+    href
+    src
+    action
+    poster
+    ==============================================
+    */
+
+    html = html.replace(
+        /(href|src|action|poster)\s*=\s*(["'])(.*?)\2/gi,
+
+        function(
+            match,
+            attribute,
+            quote,
+            value
+        ) {
+
+            const original =
+                value.trim();
+
+
+            /*
+            不处理特殊 URL
+            */
+
+            if (
+                original.startsWith("#") ||
+                original.startsWith("data:") ||
+                original.startsWith("blob:") ||
+                original.startsWith("javascript:") ||
+                original.startsWith("mailto:") ||
+                original.startsWith("tel:")
+            ) {
+
+                return match;
+
+            }
+
+
+            /*
+            <base href="">
+            */
+
+            if (
+                attribute.toLowerCase() === "href" &&
+                original.toLowerCase().startsWith(
+                    "javascript:"
+                )
+            ) {
+                return match;
+            }
+
+
+            try {
+
+                const absolute =
+                    new URL(
+                        original,
+                        base
+                    ).href;
+
+
+                if (
+                    !/^https?:/i.test(
+                        absolute
+                    )
+                ) {
+
+                    return match;
+
+                }
+
+
+                /*
+                链接和页面
+                */
+
+                const type =
+                    attribute.toLowerCase() ===
+                    "href" ||
+                    attribute.toLowerCase() ===
+                    "action"
+                        ? "go"
+                        : "asset";
+
+
+                return (
+                    attribute +
+                    "=" +
+                    quote +
+                    proxyUrl(
+                        absolute,
+                        req,
+                        type
+                    ) +
+                    quote
+                );
+
+            } catch {
+
+                return match;
+
+            }
+
+        }
+    );
+
+
+    /*
+    ==============================================
+    srcset
+    ==============================================
+    */
+
+    html = html.replace(
+        /(srcset)\s*=\s*(["'])(.*?)\2/gi,
+
+        function(
+            match,
+            attribute,
+            quote,
+            value
+        ) {
+
+            const items =
+                value.split(",");
+
+
+            const result =
+                items.map(item => {
+
+                    const parts =
+                        item.trim().split(/\s+/);
+
+
+                    if (!parts[0]) {
+                        return item;
+                    }
+
+
+                    try {
+
+                        const absolute =
+                            new URL(
+                                parts[0],
+                                base
+                            ).href;
+
+
+                        if (
+                            !/^https?:/i.test(
+                                absolute
+                            )
+                        ) {
+                            return item;
+                        }
+
+
+                        parts[0] =
+                            proxyUrl(
+                                absolute,
+                                req,
+                                "asset"
+                            );
+
+
+                        return parts.join(" ");
+
+                    } catch {
+
+                        return item;
+
+                    }
+
+                });
+
+
+            return (
+                attribute +
+                "=" +
+                quote +
+                result.join(", ") +
+                quote
+            );
+
+        }
+    );
+
+
+    /*
+    ==============================================
+    HTML 中的 style="..."
+    ==============================================
+    */
+
+    html = html.replace(
+        /style\s*=\s*(["'])(.*?)\1/gi,
+
+        function(
+            match,
+            quote,
+            value
+        ) {
+
+            return (
+                "style=" +
+                quote +
+                rewriteCSS(
+                    value,
+                    base.href,
+                    req
+                ) +
+                quote
+            );
+
+        }
+    );
+
+
+    /*
+    ==============================================
+    HTML 里的 url(...)
+    ==============================================
+    */
+
+    html = rewriteCSS(
+        html,
+        base.href,
+        req
+    );
+
+
+    return html;
+}
+
+
+/*
+==================================================
+CSS URL 重写
+==================================================
+*/
+
+function rewriteCSS(
+    css,
+    baseUrl,
+    req
+) {
+
+    const base =
+        new URL(baseUrl);
+
+
+    return css.replace(
+        /url\(\s*(["']?)(.*?)\1\s*\)/gi,
+
+        function(
+            match,
+            quote,
+            value
+        ) {
+
+            const original =
+                value.trim();
+
+
+            if (
+                original.startsWith(
+                    "data:"
+                ) ||
+                original.startsWith(
+                    "#"
+                )
+            ) {
+
+                return match;
+
+            }
+
+
+            try {
+
+                const absolute =
+                    new URL(
+                        original,
+                        base
+                    ).href;
+
+
+                if (
+                    !/^https?:/i.test(
+                        absolute
+                    )
+                ) {
+
+                    return match;
+
+                }
+
+
+                return (
+                    'url("' +
+                    proxyUrl(
+                        absolute,
+                        req,
+                        "asset"
+                    ) +
+                    '")'
+                );
+
+            } catch {
+
+                return match;
+
+            }
+
+        }
+    );
+}
 
 
 /*
