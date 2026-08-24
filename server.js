@@ -475,7 +475,7 @@ app.use(
                                 */
 
                                 html = html.replace(
-                                    /https?:\\/\\/[^"'\\s<>]+/gi,
+                                    /https?:\/\/[^"'\s<>]+/gi,
                                     function(url) {
 
                                         try {
