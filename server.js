@@ -1,275 +1,40 @@
 const express = require("express");
-const { createProxyMiddleware } = require("http-proxy-middleware");
+const {
+  createProxyMiddleware,
+  responseInterceptor
+} = require("http-proxy-middleware");
 
 const app = express();
 
+const TARGET = "https://wiki.warthunder.com";
 const PORT = process.env.PORT || 10000;
 
-/*
-==================================================
-基本安全检查
-==================================================
-*/
-
-function isValidTarget(value) {
-    try {
-        const url = new URL(value);
-
-        return (
-            url.protocol === "http:" ||
-            url.protocol === "https:"
-        );
-    } catch {
-        return false;
-    }
-}
-
 
 /*
-==================================================
-把目标 URL 转成当前 Proxy 的 URL
-==================================================
-*/
+ * =========================================================
+ * 检查是否允许代理
+ * =========================================================
+ */
 
-function proxyUrl(target, req, type = "asset") {
-    const protocol =
-        req.headers["x-forwarded-proto"] || "https";
+function isAllowedHost(hostname) {
+    if (!hostname) return false;
 
-    const host = req.headers.host;
+    hostname = hostname.toLowerCase();
 
     return (
-        `${protocol}://${host}/${type}?url=` +
-        encodeURIComponent(target)
+        hostname === "warthunder.com" ||
+        hostname.endsWith(".warthunder.com") ||
+        hostname === "encyclopedia.warthunder.com" ||
+        hostname.endsWith(".encyclopedia.warthunder.com")
     );
 }
 
 
 /*
-==================================================
-首页
-==================================================
-*/
-
-app.get("/", (req, res) => {
-
-    res.send(`
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
-
-<title>Web Proxy</title>
-
-<style>
-
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-    min-height: 100vh;
-
-    display: flex;
-    justify-content: center;
-    align-items: center;
-
-    background: #111;
-    color: white;
-
-    font-family: Arial, sans-serif;
-}
-
-.container {
-    width: min(700px, 90%);
-    text-align: center;
-}
-
-h1 {
-    font-size: 32px;
-    margin-bottom: 30px;
-}
-
-.form {
-    display: flex;
-    gap: 10px;
-}
-
-input {
-    flex: 1;
-    min-width: 0;
-
-    padding: 15px;
-
-    border: 1px solid #444;
-    border-radius: 8px;
-
-    background: #222;
-    color: white;
-
-    font-size: 16px;
-    outline: none;
-}
-
-input:focus {
-    border-color: #888;
-}
-
-button {
-    padding: 15px 25px;
-
-    border: none;
-    border-radius: 8px;
-
-    background: white;
-    color: black;
-
-    font-size: 16px;
-    font-weight: bold;
-
-    cursor: pointer;
-}
-
-button:hover {
-    background: #ddd;
-}
-
-#error {
-    display: none;
-
-    margin-top: 15px;
-
-    color: #ff5555;
-}
-
-.hint {
-    margin-top: 20px;
-
-    color: #777;
-
-    font-size: 13px;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="container">
-
-<h1>Web Proxy</h1>
-
-<form id="proxyForm">
-
-<div class="form">
-
-<input
-    id="url"
-    type="text"
-    placeholder="https://example.com/"
-    autocomplete="off"
->
-
-<button type="submit">
-GO
-</button>
-
-</div>
-
-</form>
-
-<div id="error"></div>
-
-<div class="hint">
-Enter a website URL
-</div>
-
-</div>
-
-
-<script>
-
-const form =
-    document.getElementById("proxyForm");
-
-const input =
-    document.getElementById("url");
-
-const error =
-    document.getElementById("error");
-
-
-form.addEventListener("submit", function(event) {
-
-    event.preventDefault();
-
-    let value =
-        input.value.trim();
-
-    if (!value) {
-        return;
-    }
-
-
-    /*
-    自动添加 https://
-    */
-
-    if (!/^https?:\\/\\//i.test(value)) {
-        value = "https://" + value;
-    }
-
-
-    try {
-
-        const url = new URL(value);
-
-        if (
-            url.protocol !== "http:" &&
-            url.protocol !== "https:"
-        ) {
-            throw new Error();
-        }
-
-
-        window.location.href =
-            "/go?url=" +
-            encodeURIComponent(url.href);
-
-    } catch {
-
-        error.textContent =
-            "Invalid URL.";
-
-        error.style.display =
-            "block";
-    }
-
-});
-
-</script>
-
-</body>
-
-</html>
-    `);
-
-});
-
-
-/*
-==================================================
-Health Check
-==================================================
-*/
+ * =========================================================
+ * Health check
+ * =========================================================
+ */
 
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
@@ -277,147 +42,149 @@ app.get("/health", (req, res) => {
 
 
 /*
-==================================================
-通用网页 Proxy
-==================================================
-*/
+ * =========================================================
+ * 外部资源代理
+ *
+ * 例如：
+ *
+ * /__proxy?url=https://avatars.warthunder.com/img/test.png
+ *
+ * ↓
+ *
+ * https://avatars.warthunder.com/img/test.png
+ * =========================================================
+ */
 
-app.use(
-    "/go",
-    async (req, res, next) => {
+app.get("/__proxy", async (req, res) => {
 
-        const target =
-            req.query.url;
+    try {
 
-        if (!target || !isValidTarget(target)) {
+        const originalUrl = req.query.url;
 
-            return res
-                .status(400)
-                .send("Invalid URL");
-
+        if (!originalUrl) {
+            return res.status(400).send("Missing url");
         }
 
+        const targetUrl = new URL(originalUrl);
 
-        let targetUrl;
-
-        try {
-            targetUrl = new URL(target);
-        } catch {
-            return res
-                .status(400)
-                .send("Invalid URL");
+        if (!isAllowedHost(targetUrl.hostname)) {
+            return res.status(403).send("Domain not allowed");
         }
 
+        console.log("Resource:", targetUrl.href);
+
+        const response = await fetch(targetUrl.href, {
+            headers: {
+                "User-Agent":
+                    req.headers["user-agent"] ||
+                    "Mozilla/5.0",
+
+                "Referer":
+                    "https://wiki.warthunder.com/"
+            },
+            redirect: "follow"
+        });
+
+        if (!response.ok) {
+            return res
+                .status(response.status)
+                .send(`Resource returned ${response.status}`);
+        }
 
         /*
-        把请求交给 http-proxy-middleware
-        */
+         * 复制 Content-Type
+         */
 
-        createProxyMiddleware({
+        const contentType =
+            response.headers.get("content-type");
 
-            target: targetUrl.origin,
+        if (contentType) {
+            res.setHeader(
+                "Content-Type",
+                contentType
+            );
+        }
 
-            changeOrigin: true,
+        /*
+         * Cache
+         */
 
-            secure: true,
+        res.setHeader(
+            "Cache-Control",
+            "public, max-age=3600"
+        );
 
-            followRedirects: true,
+        /*
+         * 返回资源
+         */
 
-            selfHandleResponse: true,
+        const buffer =
+            Buffer.from(
+                await response.arrayBuffer()
+            );
+
+        res.send(buffer);
+
+    } catch (error) {
+
+        console.error(
+            "Resource proxy error:",
+            error
+        );
+
+        res
+            .status(500)
+            .send("Resource proxy error");
+    }
+});
 
 
-            pathRewrite: () => {
+/*
+ * =========================================================
+ * Wiki 主站 Proxy
+ * =========================================================
+ */
 
-                return (
-                    targetUrl.pathname +
-                    targetUrl.search
+app.use(
+    "/",
+    createProxyMiddleware({
+
+        target: TARGET,
+
+        changeOrigin: true,
+        secure: true,
+        ws: true,
+        followRedirects: true,
+
+        selfHandleResponse: true,
+
+        on: {
+
+            proxyReq(proxyReq) {
+
+                proxyReq.setHeader(
+                    "Referer",
+                    TARGET + "/"
                 );
 
+                proxyReq.setHeader(
+                    "Origin",
+                    TARGET
+                );
             },
 
 
-            on: {
+            /*
+             * 只使用一个 proxyRes
+             */
 
-                proxyReq(proxyReq) {
-
-                    proxyReq.setHeader(
-                        "User-Agent",
-                        req.headers["user-agent"] ||
-                        "Mozilla/5.0"
-                    );
-
-                    proxyReq.setHeader(
-                        "Accept-Language",
-                        req.headers["accept-language"] ||
-                        "en-US,en;q=0.9"
-                    );
-
-                    proxyReq.setHeader(
-                        "Referer",
-                        targetUrl.origin + "/"
-                    );
-
-                },
-
-
-                async proxyRes(
+            proxyRes: responseInterceptor(
+                async (
+                    responseBuffer,
                     proxyRes,
                     req,
                     res
-                ) {
-
-                    /*
-                    ==========================================
-                    删除阻止嵌入的 Header
-                    ==========================================
-                    */
-
-                    delete proxyRes.headers[
-                        "x-frame-options"
-                    ];
-
-                    delete proxyRes.headers[
-                        "content-security-policy"
-                    ];
-
-                    delete proxyRes.headers[
-                        "content-security-policy-report-only"
-                    ];
-
-
-                    /*
-                    ==========================================
-                    Cookie
-                    ==========================================
-                    */
-
-                    if (
-                        proxyRes.headers["set-cookie"]
-                    ) {
-
-                        proxyRes.headers["set-cookie"] =
-                            proxyRes.headers[
-                                "set-cookie"
-                            ].map(cookie =>
-                                cookie
-                                    .replace(
-                                        /;\s*Domain=[^;]+/i,
-                                        ""
-                                    )
-                                    .replace(
-                                        /;\s*Secure/gi,
-                                        ""
-                                    )
-                            );
-
-                    }
-
-
-                    /*
-                    ==========================================
-                    获取 Content-Type
-                    ==========================================
-                    */
+                ) => {
 
                     const contentType =
                         proxyRes.headers[
@@ -426,591 +193,153 @@ app.use(
 
 
                     /*
-                    ==========================================
-                    如果不是 HTML / CSS
-                    直接返回原始资源
-                    ==========================================
-                    */
+                     * =================================================
+                     * HTML
+                     * =================================================
+                     */
 
                     if (
-                        !contentType.includes(
+                        contentType.includes(
                             "text/html"
-                        ) &&
-                        !contentType.includes(
-                            "text/css"
                         )
                     ) {
 
-                        return;
+                        let html =
+                            responseBuffer.toString(
+                                "utf8"
+                            );
 
+
+                        const protocol =
+                            req.headers[
+                                "x-forwarded-proto"
+                            ] || "https";
+
+                        const host =
+                            req.headers.host;
+
+                        const proxyBase =
+                            `${protocol}://${host}`;
+
+
+                        /*
+                         * =================================================
+                         * 处理绝对 HTTPS URL
+                         *
+                         * https://avatars.warthunder.com/...
+                         *
+                         * ↓
+                         *
+                         * /__proxy?url=...
+                         * =================================================
+                         */
+
+                        html = html.replace(
+                            /https:\/\/[a-zA-Z0-9.-]+(?:\/[^"'<>\\s)]*)?/g,
+                            (url) => {
+
+                                try {
+
+                                    const parsed =
+                                        new URL(url);
+
+                                    if (
+                                        !isAllowedHost(
+                                            parsed.hostname
+                                        )
+                                    ) {
+                                        return url;
+                                    }
+
+
+                                    return (
+                                        proxyBase +
+                                        "/__proxy?url=" +
+                                        encodeURIComponent(
+                                            url
+                                        )
+                                    );
+
+                                } catch {
+
+                                    return url;
+                                }
+                            }
+                        );
+
+
+                        /*
+                         * =================================================
+                         * 处理 //avatars.warthunder.com/...
+                         * =================================================
+                         */
+
+                        html = html.replace(
+                            /(["'(=])\/\/([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(\/[^"'<>\\s)]*)/g,
+                            (
+                                match,
+                                prefix,
+                                hostname,
+                                path
+                            ) => {
+
+                                if (
+                                    !isAllowedHost(
+                                        hostname
+                                    )
+                                ) {
+                                    return match;
+                                }
+
+
+                                const original =
+                                    `https://${hostname}${path}`;
+
+
+                                return (
+                                    prefix +
+                                    proxyBase +
+                                    "/__proxy?url=" +
+                                    encodeURIComponent(
+                                        original
+                                    )
+                                );
+                            }
+                        );
+
+
+                        /*
+                         * 返回修改后的 HTML
+                         */
+
+                        return Buffer.from(
+                            html,
+                            "utf8"
+                        );
                     }
 
 
                     /*
-                    ==========================================
-                    HTML / CSS 需要修改
-                    ==========================================
-                    */
+                     * =================================================
+                     * 其他资源
+                     *
+                     * JS / CSS / PNG / SVG 等保持原样
+                     * =================================================
+                     */
 
-                    const chunks = [];
-
-                    proxyRes.on(
-                        "data",
-                        chunk => {
-                            chunks.push(chunk);
-                        }
-                    );
-
-
-                    proxyRes.on(
-                        "end",
-                        () => {
-
-                            let body =
-                                Buffer.concat(
-                                    chunks
-                                ).toString("utf8");
-
-
-                            /*
-                            ==================================
-                            HTML
-                            ==================================
-                            */
-
-                            if (
-                                contentType.includes(
-                                    "text/html"
-                                )
-                            ) {
-
-                                body =
-                                    rewriteHTML(
-                                        body,
-                                        targetUrl.href,
-                                        req
-                                    );
-
-                            }
-
-
-                            /*
-                            ==================================
-                            CSS
-                            ==================================
-                            */
-
-                            else if (
-                                contentType.includes(
-                                    "text/css"
-                                )
-                            ) {
-
-                                body =
-                                    rewriteCSS(
-                                        body,
-                                        targetUrl.href,
-                                        req
-                                    );
-
-                            }
-
-
-                            /*
-                            ==================================
-                            删除压缩 Header
-                            ==================================
-                            */
-
-                            delete res
-                                .getHeaders()[
-                                    "content-encoding"
-                                ];
-
-
-                            res.setHeader(
-                                "Content-Type",
-                                contentType
-                            );
-
-
-                            res.send(body);
-
-                        }
-                    );
-
+                    return responseBuffer;
                 }
-
-            }
-
-        })(req, res, next);
-
-    }
+            )
+        }
+    })
 );
 
 
 /*
-==================================================
-资源 Proxy
-==================================================
-*/
-
-app.get(
-    "/asset",
-    (req, res) => {
-
-        const target =
-            req.query.url;
-
-        if (!target || !isValidTarget(target)) {
-
-            return res
-                .status(400)
-                .send("Invalid asset URL");
-
-        }
-
-
-        let targetUrl;
-
-        try {
-            targetUrl = new URL(target);
-        } catch {
-            return res
-                .status(400)
-                .send("Invalid asset URL");
-        }
-
-
-        createProxyMiddleware({
-
-            target: targetUrl.origin,
-
-            changeOrigin: true,
-
-            secure: true,
-
-            followRedirects: true,
-
-            pathRewrite: () => {
-
-                return (
-                    targetUrl.pathname +
-                    targetUrl.search
-                );
-
-            },
-
-
-            on: {
-
-                proxyReq(proxyReq) {
-
-                    proxyReq.setHeader(
-                        "User-Agent",
-                        "Mozilla/5.0"
-                    );
-
-                    proxyReq.setHeader(
-                        "Referer",
-                        targetUrl.origin + "/"
-                    );
-
-                },
-
-
-                proxyRes(proxyRes) {
-
-                    /*
-                    删除限制
-                    */
-
-                    delete proxyRes.headers[
-                        "x-frame-options"
-                    ];
-
-                    delete proxyRes.headers[
-                        "content-security-policy"
-                    ];
-
-                    /*
-                    Cookie
-                    */
-
-                    if (
-                        proxyRes.headers["set-cookie"]
-                    ) {
-
-                        proxyRes.headers["set-cookie"] =
-                            proxyRes.headers[
-                                "set-cookie"
-                            ].map(cookie =>
-                                cookie
-                                    .replace(
-                                        /;\s*Domain=[^;]+/i,
-                                        ""
-                                    )
-                                    .replace(
-                                        /;\s*Secure/gi,
-                                        ""
-                                    )
-                            );
-
-                    }
-
-                }
-
-            }
-
-        })(req, res);
-
-    }
-);
-
-
-/*
-==================================================
-HTML URL 重写
-==================================================
-*/
-
-function rewriteHTML(
-    html,
-    baseUrl,
-    req
-) {
-
-    const base =
-        new URL(baseUrl);
-
-
-    /*
-    ==============================================
-    href
-    src
-    action
-    poster
-    ==============================================
-    */
-
-    html = html.replace(
-        /(href|src|action|poster)\s*=\s*(["'])(.*?)\2/gi,
-
-        function(
-            match,
-            attribute,
-            quote,
-            value
-        ) {
-
-            const original =
-                value.trim();
-
-
-            /*
-            不处理特殊 URL
-            */
-
-            if (
-                original.startsWith("#") ||
-                original.startsWith("data:") ||
-                original.startsWith("blob:") ||
-                original.startsWith("javascript:") ||
-                original.startsWith("mailto:") ||
-                original.startsWith("tel:")
-            ) {
-
-                return match;
-
-            }
-
-
-            /*
-            <base href="">
-            */
-
-            if (
-                attribute.toLowerCase() === "href" &&
-                original.toLowerCase().startsWith(
-                    "javascript:"
-                )
-            ) {
-                return match;
-            }
-
-
-            try {
-
-                const absolute =
-                    new URL(
-                        original,
-                        base
-                    ).href;
-
-
-                if (
-                    !/^https?:/i.test(
-                        absolute
-                    )
-                ) {
-
-                    return match;
-
-                }
-
-
-                /*
-                链接和页面
-                */
-
-                const type =
-                    attribute.toLowerCase() ===
-                    "href" ||
-                    attribute.toLowerCase() ===
-                    "action"
-                        ? "go"
-                        : "asset";
-
-
-                return (
-                    attribute +
-                    "=" +
-                    quote +
-                    proxyUrl(
-                        absolute,
-                        req,
-                        type
-                    ) +
-                    quote
-                );
-
-            } catch {
-
-                return match;
-
-            }
-
-        }
-    );
-
-
-    /*
-    ==============================================
-    srcset
-    ==============================================
-    */
-
-    html = html.replace(
-        /(srcset)\s*=\s*(["'])(.*?)\2/gi,
-
-        function(
-            match,
-            attribute,
-            quote,
-            value
-        ) {
-
-            const items =
-                value.split(",");
-
-
-            const result =
-                items.map(item => {
-
-                    const parts =
-                        item.trim().split(/\s+/);
-
-
-                    if (!parts[0]) {
-                        return item;
-                    }
-
-
-                    try {
-
-                        const absolute =
-                            new URL(
-                                parts[0],
-                                base
-                            ).href;
-
-
-                        if (
-                            !/^https?:/i.test(
-                                absolute
-                            )
-                        ) {
-                            return item;
-                        }
-
-
-                        parts[0] =
-                            proxyUrl(
-                                absolute,
-                                req,
-                                "asset"
-                            );
-
-
-                        return parts.join(" ");
-
-                    } catch {
-
-                        return item;
-
-                    }
-
-                });
-
-
-            return (
-                attribute +
-                "=" +
-                quote +
-                result.join(", ") +
-                quote
-            );
-
-        }
-    );
-
-
-    /*
-    ==============================================
-    HTML 中的 style="..."
-    ==============================================
-    */
-
-    html = html.replace(
-        /style\s*=\s*(["'])(.*?)\1/gi,
-
-        function(
-            match,
-            quote,
-            value
-        ) {
-
-            return (
-                "style=" +
-                quote +
-                rewriteCSS(
-                    value,
-                    base.href,
-                    req
-                ) +
-                quote
-            );
-
-        }
-    );
-
-
-    /*
-    ==============================================
-    HTML 里的 url(...)
-    ==============================================
-    */
-
-    html = rewriteCSS(
-        html,
-        base.href,
-        req
-    );
-
-
-    return html;
-}
-
-
-/*
-==================================================
-CSS URL 重写
-==================================================
-*/
-
-function rewriteCSS(
-    css,
-    baseUrl,
-    req
-) {
-
-    const base =
-        new URL(baseUrl);
-
-
-    return css.replace(
-        /url\(\s*(["']?)(.*?)\1\s*\)/gi,
-
-        function(
-            match,
-            quote,
-            value
-        ) {
-
-            const original =
-                value.trim();
-
-
-            if (
-                original.startsWith(
-                    "data:"
-                ) ||
-                original.startsWith(
-                    "#"
-                )
-            ) {
-
-                return match;
-
-            }
-
-
-            try {
-
-                const absolute =
-                    new URL(
-                        original,
-                        base
-                    ).href;
-
-
-                if (
-                    !/^https?:/i.test(
-                        absolute
-                    )
-                ) {
-
-                    return match;
-
-                }
-
-
-                return (
-                    'url("' +
-                    proxyUrl(
-                        absolute,
-                        req,
-                        "asset"
-                    ) +
-                    '")'
-                );
-
-            } catch {
-
-                return match;
-
-            }
-
-        }
-    );
-}
-
-
-/*
-==================================================
-启动
-==================================================
-*/
+ * =========================================================
+ * Start
+ * =========================================================
+ */
 
 app.listen(
     PORT,
