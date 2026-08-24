@@ -6,7 +6,7 @@ const {
 
 const app = express();
 
-const TARGET = "https://1939.giaory.xyz";
+const TARGET = "https://wiki.warthunder.com";
 const PORT = process.env.PORT || 10000;
 
 /*
