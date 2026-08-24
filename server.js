@@ -3,7 +3,7 @@ const { createProxyMiddleware } = require("http-proxy-middleware");
 
 const app = express();
 
-const TARGET = "https://1939.giaory.xyz";
+const TARGET = "https://wiki.warthunder.com/";
 
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
