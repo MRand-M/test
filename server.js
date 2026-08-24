@@ -1,23 +1,27 @@
 const express = require("express");
 const {
-  createProxyMiddleware,
-  responseInterceptor
+    createProxyMiddleware,
+    responseInterceptor
 } = require("http-proxy-middleware");
 
 const app = express();
 
-const TARGET = "https://wiki.warthunder.com";
 const PORT = process.env.PORT || 10000;
+
+const HOME = "https://wiki.warthunder.com";
 
 
 /*
- * =========================================================
- * 检查是否允许代理
- * =========================================================
- */
+==================================================
+允许的 War Thunder 域名
+==================================================
+*/
 
 function isAllowedHost(hostname) {
-    if (!hostname) return false;
+
+    if (!hostname) {
+        return false;
+    }
 
     hostname = hostname.toLowerCase();
 
@@ -31,315 +35,578 @@ function isAllowedHost(hostname) {
 
 
 /*
- * =========================================================
- * Health check
- * =========================================================
- */
+==================================================
+首页
+==================================================
+*/
 
-app.get("/health", (req, res) => {
-    res.status(200).send("OK");
-});
+app.get("/", (req, res) => {
+
+    res.send(`
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>War Thunder Proxy</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+
+    margin: 0;
+
+    min-height: 100vh;
+
+    display: flex;
+
+    justify-content: center;
+
+    align-items: center;
+
+    background: #111;
+
+    color: white;
+
+    font-family: Arial, sans-serif;
+}
 
 
-/*
- * =========================================================
- * 外部资源代理
- *
- * 例如：
- *
- * /__proxy?url=https://avatars.warthunder.com/img/test.png
- *
- * ↓
- *
- * https://avatars.warthunder.com/img/test.png
- * =========================================================
- */
+.container {
 
-app.get("/__proxy", async (req, res) => {
+    width: min(650px, 90%);
+
+    text-align: center;
+}
+
+
+h1 {
+
+    font-size: 32px;
+
+    margin-bottom: 30px;
+}
+
+
+.form {
+
+    display: flex;
+
+    gap: 10px;
+}
+
+
+input {
+
+    flex: 1;
+
+    min-width: 0;
+
+    padding: 15px;
+
+    border-radius: 8px;
+
+    border: 1px solid #444;
+
+    background: #222;
+
+    color: white;
+
+    font-size: 16px;
+
+    outline: none;
+}
+
+
+input:focus {
+
+    border-color: #888;
+}
+
+
+button {
+
+    padding: 15px 25px;
+
+    border: none;
+
+    border-radius: 8px;
+
+    background: white;
+
+    color: black;
+
+    font-weight: bold;
+
+    font-size: 16px;
+
+    cursor: pointer;
+}
+
+
+button:hover {
+
+    background: #ddd;
+}
+
+
+#error {
+
+    display: none;
+
+    margin-top: 15px;
+
+    color: #ff5555;
+}
+
+
+.hint {
+
+    margin-top: 20px;
+
+    color: #777;
+
+    font-size: 13px;
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+
+<div class="container">
+
+<h1>War Thunder Web Proxy</h1>
+
+
+<form id="form">
+
+<div class="form">
+
+<input
+    id="url"
+    type="text"
+    placeholder="https://wiki.warthunder.com/"
+    autocomplete="off"
+>
+
+<button type="submit">
+GO
+</button>
+
+</div>
+
+</form>
+
+
+<div id="error"></div>
+
+
+<div class="hint">
+War Thunder websites only
+</div>
+
+
+</div>
+
+
+<script>
+
+const form = document.getElementById("form");
+
+const input = document.getElementById("url");
+
+const error = document.getElementById("error");
+
+
+form.addEventListener("submit", function(e) {
+
+    e.preventDefault();
+
+
+    let value = input.value.trim();
+
+
+    if (!value) {
+        return;
+    }
+
+
+    /*
+    自动补 https://
+    */
+
+    if (!/^https?:\\/\\//i.test(value)) {
+
+        value = "https://" + value;
+
+    }
+
+
+    let url;
+
 
     try {
 
-        const originalUrl = req.query.url;
+        url = new URL(value);
 
-        if (!originalUrl) {
-            return res.status(400).send("Missing url");
-        }
+    } catch {
 
-        const targetUrl = new URL(originalUrl);
+        error.textContent = "Invalid URL.";
 
-        if (!isAllowedHost(targetUrl.hostname)) {
-            return res.status(403).send("Domain not allowed");
-        }
+        error.style.display = "block";
 
-        console.log("Resource:", targetUrl.href);
+        return;
 
-        const response = await fetch(targetUrl.href, {
-            headers: {
-                "User-Agent":
-                    req.headers["user-agent"] ||
-                    "Mozilla/5.0",
-
-                "Referer":
-                    "https://wiki.warthunder.com/"
-            },
-            redirect: "follow"
-        });
-
-        if (!response.ok) {
-            return res
-                .status(response.status)
-                .send(`Resource returned ${response.status}`);
-        }
-
-        /*
-         * 复制 Content-Type
-         */
-
-        const contentType =
-            response.headers.get("content-type");
-
-        if (contentType) {
-            res.setHeader(
-                "Content-Type",
-                contentType
-            );
-        }
-
-        /*
-         * Cache
-         */
-
-        res.setHeader(
-            "Cache-Control",
-            "public, max-age=3600"
-        );
-
-        /*
-         * 返回资源
-         */
-
-        const buffer =
-            Buffer.from(
-                await response.arrayBuffer()
-            );
-
-        res.send(buffer);
-
-    } catch (error) {
-
-        console.error(
-            "Resource proxy error:",
-            error
-        );
-
-        res
-            .status(500)
-            .send("Resource proxy error");
     }
+
+
+    const host =
+        url.hostname.toLowerCase();
+
+
+    /*
+    只允许 War Thunder
+    */
+
+    const allowed =
+        host === "warthunder.com" ||
+        host.endsWith(".warthunder.com") ||
+        host === "encyclopedia.warthunder.com" ||
+        host.endsWith(".encyclopedia.warthunder.com");
+
+
+    if (!allowed) {
+
+        error.textContent =
+            "Only War Thunder websites are supported.";
+
+        error.style.display = "block";
+
+        return;
+
+    }
+
+
+    /*
+    进入网页 Proxy
+    */
+
+    window.location.href =
+        "/visit?url=" +
+        encodeURIComponent(url.href);
+
+});
+
+</script>
+
+
+</body>
+
+</html>
+    `);
+
 });
 
 
 /*
- * =========================================================
- * Wiki 主站 Proxy
- * =========================================================
- */
+==================================================
+Health Check
+==================================================
+*/
+
+app.get("/health", (req, res) => {
+
+    res.status(200).send("OK");
+
+});
+
+
+/*
+==================================================
+访问网页
+==================================================
+*/
 
 app.use(
-    "/",
-    createProxyMiddleware({
+    "/visit",
+    async (req, res) => {
 
-        target: TARGET,
+        try {
 
-        changeOrigin: true,
-        secure: true,
-        ws: true,
-        followRedirects: true,
+            const originalUrl =
+                req.query.url;
 
-        selfHandleResponse: true,
 
-        on: {
+            if (!originalUrl) {
 
-            proxyReq(proxyReq) {
+                return res
+                    .status(400)
+                    .send("Missing URL");
 
-                proxyReq.setHeader(
-                    "Referer",
-                    TARGET + "/"
-                );
+            }
 
-                proxyReq.setHeader(
-                    "Origin",
-                    TARGET
-                );
-            },
+
+            const targetUrl =
+                new URL(originalUrl);
+
+
+            if (
+                !isAllowedHost(
+                    targetUrl.hostname
+                )
+            ) {
+
+                return res
+                    .status(403)
+                    .send("Domain not allowed");
+
+            }
 
 
             /*
-             * 只使用一个 proxyRes
-             */
+            创建真正的网页 Proxy
+            */
 
-            proxyRes: responseInterceptor(
-                async (
-                    responseBuffer,
-                    proxyRes,
-                    req,
-                    res
-                ) => {
+            createProxyMiddleware({
 
-                    const contentType =
-                        proxyRes.headers[
-                            "content-type"
-                        ] || "";
+                target: targetUrl.origin,
 
+                changeOrigin: true,
 
-                    /*
-                     * =================================================
-                     * HTML
-                     * =================================================
-                     */
+                secure: true,
 
-                    if (
-                        contentType.includes(
-                            "text/html"
-                        )
-                    ) {
+                followRedirects: true,
 
-                        let html =
-                            responseBuffer.toString(
-                                "utf8"
-                            );
+                selfHandleResponse: true,
 
 
-                        const protocol =
-                            req.headers[
-                                "x-forwarded-proto"
-                            ] || "https";
+                pathRewrite: () => {
 
-                        const host =
-                            req.headers.host;
+                    return (
+                        targetUrl.pathname +
+                        targetUrl.search
+                    );
 
-                        const proxyBase =
-                            `${protocol}://${host}`;
+                },
 
 
-                        /*
-                         * =================================================
-                         * 处理绝对 HTTPS URL
-                         *
-                         * https://avatars.warthunder.com/...
-                         *
-                         * ↓
-                         *
-                         * /__proxy?url=...
-                         * =================================================
-                         */
+                on: {
 
-                        html = html.replace(
-                            /https:\/\/[a-zA-Z0-9.-]+(?:\/[^"'<>\\s)]*)?/g,
-                            (url) => {
+                    proxyReq(proxyReq) {
 
-                                try {
+                        proxyReq.setHeader(
+                            "User-Agent",
+                            req.headers["user-agent"] ||
+                            "Mozilla/5.0"
+                        );
 
-                                    const parsed =
-                                        new URL(url);
+                        proxyReq.setHeader(
+                            "Referer",
+                            "https://wiki.warthunder.com/"
+                        );
 
-                                    if (
-                                        !isAllowedHost(
-                                            parsed.hostname
-                                        )
-                                    ) {
-                                        return url;
-                                    }
+                    },
 
 
-                                    return (
-                                        proxyBase +
-                                        "/__proxy?url=" +
-                                        encodeURIComponent(
-                                            url
-                                        )
+                    proxyRes:
+                    responseInterceptor(
+                        async (
+                            buffer,
+                            proxyRes,
+                            req,
+                            res
+                        ) => {
+
+
+                            const type =
+                                proxyRes.headers[
+                                    "content-type"
+                                ] || "";
+
+
+                            /*
+                            HTML 重写
+                            */
+
+                            if (
+                                type.includes(
+                                    "text/html"
+                                )
+                            ) {
+
+                                let html =
+                                    buffer.toString(
+                                        "utf8"
                                     );
 
-                                } catch {
 
-                                    return url;
-                                }
-                            }
-                        );
-
-
-                        /*
-                         * =================================================
-                         * 处理 //avatars.warthunder.com/...
-                         * =================================================
-                         */
-
-                        html = html.replace(
-                            /(["'(=])\/\/([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(\/[^"'<>\\s)]*)/g,
-                            (
-                                match,
-                                prefix,
-                                hostname,
-                                path
-                            ) => {
-
-                                if (
-                                    !isAllowedHost(
-                                        hostname
-                                    )
-                                ) {
-                                    return match;
-                                }
+                                const protocol =
+                                    req.headers[
+                                        "x-forwarded-proto"
+                                    ] || "https";
 
 
-                                const original =
-                                    `https://${hostname}${path}`;
+                                const host =
+                                    req.headers.host;
 
 
-                                return (
-                                    prefix +
-                                    proxyBase +
-                                    "/__proxy?url=" +
-                                    encodeURIComponent(
-                                        original
-                                    )
+                                const base =
+                                    `${protocol}://${host}`;
+
+
+                                /*
+                                绝对 URL
+                                */
+
+                                html = html.replace(
+                                    /https?:\\/\\/[^"'\\s<>]+/gi,
+                                    function(url) {
+
+                                        try {
+
+                                            const u =
+                                                new URL(url);
+
+
+                                            if (
+                                                !isAllowedHost(
+                                                    u.hostname
+                                                )
+                                            ) {
+
+                                                return url;
+
+                                            }
+
+
+                                            return (
+                                                base +
+                                                "/visit?url=" +
+                                                encodeURIComponent(
+                                                    u.href
+                                                )
+                                            );
+
+                                        } catch {
+
+                                            return url;
+
+                                        }
+
+                                    }
                                 );
+
+
+                                /*
+                                //domain.com/path
+                                */
+
+                                html = html.replace(
+                                    /(["'(=])\\/\\/([^"'\\s<>]+\\.[^"'\\s<>]+)(\\/[^"'\\s<>]*)/gi,
+                                    function(
+                                        match,
+                                        prefix,
+                                        hostname,
+                                        path
+                                    ) {
+
+
+                                        if (
+                                            !isAllowedHost(
+                                                hostname
+                                            )
+                                        ) {
+
+                                            return match;
+
+                                        }
+
+
+                                        const original =
+                                            "https://" +
+                                            hostname +
+                                            path;
+
+
+                                        return (
+                                            prefix +
+                                            base +
+                                            "/visit?url=" +
+                                            encodeURIComponent(
+                                                original
+                                            )
+                                        );
+
+                                    }
+                                );
+
+
+                                /*
+                                相对 URL 不需要改。
+
+                                /img/a.png
+                                /css/style.css
+                                /wiki/Test
+                                
+                                都会继续请求当前 Proxy。
+                                */
+
+
+                                return Buffer.from(
+                                    html,
+                                    "utf8"
+                                );
+
                             }
-                        );
 
 
-                        /*
-                         * 返回修改后的 HTML
-                         */
+                            return buffer;
 
-                        return Buffer.from(
-                            html,
-                            "utf8"
-                        );
-                    }
+                        }
+                    )
 
-
-                    /*
-                     * =================================================
-                     * 其他资源
-                     *
-                     * JS / CSS / PNG / SVG 等保持原样
-                     * =================================================
-                     */
-
-                    return responseBuffer;
                 }
-            )
+
+            })(req, res);
+
+        } catch (error) {
+
+            console.error(
+                "Proxy error:",
+                error
+            );
+
+            res
+                .status(500)
+                .send("Proxy error");
+
         }
-    })
+
+    }
 );
 
 
 /*
- * =========================================================
- * Start
- * =========================================================
- */
+==================================================
+Start
+==================================================
+*/
 
 app.listen(
     PORT,
