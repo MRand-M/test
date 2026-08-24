@@ -295,7 +295,7 @@ app.use(
 
                         const baseUrl =
                             new URL(
-                                req.originalUrl || "/",
+                                req.originalUrl.split("?")[0] || "/",
                                 TARGET
                             );
 
