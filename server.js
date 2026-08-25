@@ -6,19 +6,23 @@ const {
 
 const app = express();
 
+
 /*
 ==========================================================
 TARGET
 ==========================================================
-只需要改这里。
+
+你以后只需要改这一行。
 
 例如：
 
-const TARGET = "https://1939.giaory.xyz";
+const TARGET = "https://live.warthunder.com";
 
 或者：
 
-const TARGET = "https://live.warthunder.com";
+const TARGET = "https://1939.giaory.xyz";
+
+==========================================================
 */
 
 const TARGET = "https://live.warthunder.com/";
@@ -35,43 +39,68 @@ const PORT = process.env.PORT || 10000;
 
 /*
 ==========================================================
-允许访问的资源域名
+TARGET HOST
+==========================================================
+*/
+
+const TARGET_HOST =
+    new URL(TARGET).hostname.toLowerCase();
+
+
+/*
+==========================================================
+允许 Proxy 的资源域名
+==========================================================
+
+允许：
+
+TARGET 本身
+TARGET 子域名
+*.warthunder.com
+*.encyclopedia.warthunder.com
+cdn-live.warthunder.com
 ==========================================================
 */
 
 function isAllowedHost(hostname) {
 
-    hostname = hostname.toLowerCase();
-
-    let targetHost = "";
-
-    try {
-        targetHost =
-            new URL(TARGET).hostname.toLowerCase();
-    } catch {
-        targetHost = "";
-    }
+    hostname =
+        hostname.toLowerCase();
 
 
     /*
-    TARGET 本身以及它的子域名
+    TARGET 本身
     */
 
     if (
-        hostname === targetHost ||
-        hostname.endsWith("." + targetHost)
+        hostname === TARGET_HOST
     ) {
         return true;
     }
 
 
     /*
-    War Thunder 所有子域名
+    TARGET 子域名
+    */
+
+    if (
+        hostname.endsWith(
+            "." + TARGET_HOST
+        )
+    ) {
+        return true;
+    }
+
+
+    /*
+    War Thunder
     */
 
     if (
         hostname === "warthunder.com" ||
-        hostname.endsWith(".warthunder.com")
+        hostname.endsWith(
+            ".warthunder.com"
+        )
     ) {
         return true;
     }
@@ -82,21 +111,12 @@ function isAllowedHost(hostname) {
     */
 
     if (
-        hostname === "encyclopedia.warthunder.com" ||
+        hostname ===
+            "encyclopedia.warthunder.com" ||
+
         hostname.endsWith(
             ".encyclopedia.warthunder.com"
         )
-    ) {
-        return true;
-    }
-
-
-    /*
-    CDN
-    */
-
-    if (
-        hostname === "cdn-live.warthunder.com"
     ) {
         return true;
     }
@@ -108,229 +128,560 @@ function isAllowedHost(hostname) {
 
 /*
 ==========================================================
-生成资源 Proxy URL
+生成 /__resource URL
 ==========================================================
 */
 
-function makeProxyUrl(url, req) {
+function makeProxyUrl(
+    originalUrl,
+    req
+) {
 
     const protocol =
-        req.headers["x-forwarded-proto"] ||
-        "https";
+        req.headers[
+            "x-forwarded-proto"
+        ] || "https";
+
 
     const host =
         req.headers.host;
 
+
     return (
-        `${protocol}://${host}/__resource?url=` +
-        encodeURIComponent(url)
+        `${protocol}://${host}` +
+        `/__resource?url=` +
+        encodeURIComponent(
+            originalUrl
+        )
     );
 }
 
 
 /*
 ==========================================================
-Health Check
+把 URL 转换成 Proxy URL
 ==========================================================
 */
 
-app.get("/health", (req, res) => {
+function rewriteUrl(
+    url,
+    req
+) {
 
-    res
-        .status(200)
-        .send("OK");
-});
+    try {
+
+        /*
+        如果已经是我们的 Proxy
+        不要重复处理
+        */
+
+        if (
+            url.includes(
+                "/__resource?"
+            )
+        ) {
+            return url;
+        }
+
+
+        const parsed =
+            new URL(url);
+
+
+        /*
+        只处理允许的域名
+        */
+
+        if (
+            !isAllowedHost(
+                parsed.hostname
+            )
+        ) {
+            return url;
+        }
+
+
+        return makeProxyUrl(
+            url,
+            req
+        );
+
+    } catch {
+
+        return url;
+    }
+}
+
+
+/*
+==========================================================
+重写普通文本中的 URL
+==========================================================
+
+处理：
+
+https://cdn-live.warthunder.com/xxx.png
+
+https://avatars.warthunder.com/xxx.png
+
+https://static.encyclopedia.warthunder.com/xxx.svg
+
+以及 JS 中：
+
+https:\/\/cdn-live.warthunder.com\/xxx.png
+
+==========================================================
+*/
+
+function rewriteTextUrls(
+    text,
+    req
+) {
+
+    /*
+    ------------------------------------------------------
+    普通 URL
+    ------------------------------------------------------
+    */
+
+    text =
+        text.replace(
+            /https?:\/\/[^"'<>\\\s)]+/gi,
+            (url) => {
+
+                return rewriteUrl(
+                    url,
+                    req
+                );
+            }
+        );
+
+
+    /*
+    ------------------------------------------------------
+    JS escaped URL
+
+    https:\/\/cdn-live...
+    ------------------------------------------------------
+    */
+
+    text =
+        text.replace(
+            /https?:\\\/\\\/[^"'<>\\\s)]+/gi,
+            (url) => {
+
+                try {
+
+                    /*
+                    还原 JS escape
+                    */
+
+                    const normalUrl =
+                        url.replace(
+                            /\\\//g,
+                            "/"
+                        );
+
+
+                    const rewritten =
+                        rewriteUrl(
+                            normalUrl,
+                            req
+                        );
+
+
+                    /*
+                    如果没有被修改
+                    */
+
+                    if (
+                        rewritten ===
+                        normalUrl
+                    ) {
+                        return url;
+                    }
+
+
+                    /*
+                    再转回 JS escaped 格式
+                    */
+
+                    return rewritten.replace(
+                        /\//g,
+                        "\\/"
+                    );
+
+                } catch {
+
+                    return url;
+                }
+            }
+        );
+
+
+    return text;
+}
+
+
+/*
+==========================================================
+重写 CSS url(...)
+==========================================================
+*/
+
+function rewriteCssUrls(
+    text,
+    baseUrl,
+    req
+) {
+
+    return text.replace(
+        /url\(\s*(["']?)(.*?)\1\s*\)/gi,
+        (
+            match,
+            quote,
+            value
+        ) => {
+
+            const trimmed =
+                value.trim();
+
+
+            /*
+            不处理 data:
+            */
+
+            if (
+                trimmed.startsWith(
+                    "data:"
+                )
+            ) {
+                return match;
+            }
+
+
+            /*
+            不处理 #
+            */
+
+            if (
+                trimmed.startsWith(
+                    "#"
+                )
+            ) {
+                return match;
+            }
+
+
+            /*
+            已经 Proxy
+            */
+
+            if (
+                trimmed.includes(
+                    "/__resource?"
+                )
+            ) {
+                return match;
+            }
+
+
+            try {
+
+                const absolute =
+                    new URL(
+                        trimmed,
+                        baseUrl
+                    ).href;
+
+
+                const rewritten =
+                    rewriteUrl(
+                        absolute,
+                        req
+                    );
+
+
+                if (
+                    rewritten ===
+                    absolute
+                ) {
+                    return match;
+                }
+
+
+                return (
+                    `url("${rewritten}")`
+                );
+
+            } catch {
+
+                return match;
+            }
+        }
+    );
+}
 
 
 /*
 ==========================================================
 资源代理
-==========================================================
 
-例如：
+浏览器请求：
 
-/__resource?url=https://cdn-live.warthunder.com/xxx.png
-
+/__resource?url=https://cdn-live...
 ==========================================================
 */
 
-app.get("/__resource", async (req, res) => {
+app.get(
+    "/__resource",
+    async (
+        req,
+        res
+    ) => {
 
-    try {
+        try {
 
-        const target =
-            req.query.url;
-
-
-        if (!target) {
-
-            return res
-                .status(400)
-                .send("Missing URL");
-        }
+            const targetUrl =
+                req.query.url;
 
 
-        const url =
-            new URL(target);
+            if (
+                !targetUrl ||
+                typeof targetUrl !==
+                    "string"
+            ) {
+
+                return res
+                    .status(400)
+                    .send(
+                        "Missing URL"
+                    );
+            }
 
 
-        /*
-        检查域名
-        */
-
-        if (
-            !isAllowedHost(
-                url.hostname
-            )
-        ) {
-
-            return res
-                .status(403)
-                .send("Domain not allowed");
-        }
+            let parsed;
 
 
-        console.log(
-            "Loading resource:",
-            url.href
-        );
+            try {
+
+                parsed =
+                    new URL(
+                        targetUrl
+                    );
+
+            } catch {
+
+                return res
+                    .status(400)
+                    .send(
+                        "Invalid URL"
+                    );
+            }
 
 
-        /*
-        请求资源
-        */
+            /*
+            只允许 HTTP / HTTPS
+            */
 
-        const response =
-            await fetch(
-                url.href,
-                {
-                    method: "GET",
+            if (
+                parsed.protocol !==
+                    "http:" &&
+                parsed.protocol !==
+                    "https:"
+            ) {
 
-                    redirect: "follow",
+                return res
+                    .status(403)
+                    .send(
+                        "Protocol not allowed"
+                    );
+            }
 
-                    headers: {
 
-                        "User-Agent":
-                            req.headers["user-agent"] ||
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
+            /*
+            域名检查
+            */
 
-                        "Accept":
-                            req.headers["accept"] ||
-                            "*/*",
+            if (
+                !isAllowedHost(
+                    parsed.hostname
+                )
+            ) {
 
-                        "Accept-Language":
-                            req.headers["accept-language"] ||
-                            "en-US,en;q=0.9",
+                return res
+                    .status(403)
+                    .send(
+                        "Domain not allowed"
+                    );
+            }
 
-                        "Referer":
-                            TARGET.endsWith("/")
-                                ? TARGET
-                                : TARGET + "/"
+
+            console.log(
+                "Loading resource:",
+                parsed.href
+            );
+
+
+            /*
+            请求 CDN
+            */
+
+            const response =
+                await fetch(
+                    parsed.href,
+                    {
+                        method: "GET",
+
+                        redirect: "follow",
+
+                        headers: {
+
+                            "User-Agent":
+                                req.headers[
+                                    "user-agent"
+                                ] ||
+                                "Mozilla/5.0",
+
+                            "Accept":
+                                req.headers[
+                                    "accept"
+                                ] ||
+                                "*/*",
+
+                            "Accept-Language":
+                                req.headers[
+                                    "accept-language"
+                                ] ||
+                                "en-US,en;q=0.9",
+
+                            "Referer":
+                                TARGET +
+                                "/"
+                        }
                     }
-                }
-            );
-
-
-        console.log(
-            "Resource response:",
-            response.status,
-            response.headers.get(
-                "content-type"
-            )
-        );
-
-
-        /*
-        如果资源请求失败
-        */
-
-        if (!response.ok) {
-
-            return res
-                .status(response.status)
-                .send(
-                    `Resource returned ${response.status}`
                 );
-        }
 
 
-        /*
-        Content-Type
-        */
-
-        const contentType =
-            response.headers.get(
-                "content-type"
+            console.log(
+                "Resource response:",
+                response.status,
+                response.headers.get(
+                    "content-type"
+                )
             );
 
-        if (contentType) {
+
+            /*
+            请求失败
+            */
+
+            if (
+                !response.ok
+            ) {
+
+                return res
+                    .status(
+                        response.status
+                    )
+                    .send(
+                        `Resource returned ${response.status}`
+                    );
+            }
+
+
+            /*
+            Content-Type
+            */
+
+            const resourceType =
+                response.headers.get(
+                    "content-type"
+                );
+
+
+            if (
+                resourceType
+            ) {
+
+                res.setHeader(
+                    "Content-Type",
+                    resourceType
+                );
+            }
+
+
+            /*
+            Content-Length
+            */
+
+            const contentLength =
+                response.headers.get(
+                    "content-length"
+                );
+
+
+            if (
+                contentLength
+            ) {
+
+                res.setHeader(
+                    "Content-Length",
+                    contentLength
+                );
+            }
+
+
+            /*
+            缓存
+            */
 
             res.setHeader(
-                "Content-Type",
-                contentType
-            );
-        }
-
-
-        /*
-        缓存
-        */
-
-        res.setHeader(
-            "Cache-Control",
-            "public, max-age=3600"
-        );
-
-
-        /*
-        返回二进制内容
-        */
-
-        const buffer =
-            Buffer.from(
-                await response.arrayBuffer()
+                "Cache-Control",
+                "public, max-age=3600"
             );
 
 
-        res.send(buffer);
+            /*
+            获取二进制
+            */
 
-    } catch (error) {
-
-        console.error(
-            "Resource error:",
-            error
-        );
-
-
-        if (!res.headersSent) {
-
-            res
-                .status(500)
-                .send(
-                    "Resource error"
+            const buffer =
+                Buffer.from(
+                    await response.arrayBuffer()
                 );
+
+
+            res.send(
+                buffer
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Resource error:",
+                error
+            );
+
+
+            if (
+                !res.headersSent
+            ) {
+
+                res
+                    .status(500)
+                    .send(
+                        "Resource error"
+                    );
+            }
         }
     }
-});
+);
 
 
 /*
 ==========================================================
-主网站 Proxy
-==========================================================
-
-/
-    ↓
-TARGET/
-
- /collection
-    ↓
-TARGET/collection
-
- /cards
-    ↓
-TARGET/cards
-
+主 Proxy
 ==========================================================
 */
 
@@ -355,22 +706,15 @@ app.use(
 
             /*
             ==================================================
-            不再修改 proxyReq headers
+            不使用 proxyReq
 
-            之前这里的 setHeader 会导致：
+            不再手动 setHeader，
+            避免：
 
             ERR_HTTP_HEADERS_SENT
-
-            所以这里故意不放 proxyReq。
             ==================================================
             */
 
-
-            /*
-            ==================================================
-            TARGET 返回
-            ==================================================
-            */
 
             proxyRes:
                 responseInterceptor(
@@ -382,27 +726,81 @@ app.use(
                     ) => {
 
                         const contentType =
-                            proxyRes.headers[
-                                "content-type"
-                            ] || "";
+                            (
+                                proxyRes
+                                    .headers[
+                                        "content-type"
+                                    ] ||
+                                ""
+                            ).toLowerCase();
 
 
                         /*
                         ==================================================
-                        HTML
+                        判断是否为文本内容
+                        ==================================================
+                        */
+
+                        const isHtml =
+                            contentType.includes(
+                                "text/html"
+                            );
+
+                        const isJavaScript =
+                            contentType.includes(
+                                "javascript"
+                            ) ||
+                            contentType.includes(
+                                "ecmascript"
+                            );
+
+                        const isJson =
+                            contentType.includes(
+                                "application/json"
+                            ) ||
+                            contentType.includes(
+                                "text/json"
+                            );
+
+                        const isCss =
+                            contentType.includes(
+                                "text/css"
+                            );
+
+                        const isSvg =
+                            contentType.includes(
+                                "image/svg+xml"
+                            );
+
+
+                        /*
+                        ==================================================
+                        HTML / JS / JSON / CSS / SVG
                         ==================================================
                         */
 
                         if (
-                            contentType.includes(
-                                "text/html"
-                            )
+                            isHtml ||
+                            isJavaScript ||
+                            isJson ||
+                            isCss ||
+                            isSvg
                         ) {
 
-                            let html =
-                                responseBuffer.toString(
-                                    "utf8"
-                                );
+                            let text;
+
+
+                            try {
+
+                                text =
+                                    responseBuffer.toString(
+                                        "utf8"
+                                    );
+
+                            } catch {
+
+                                return responseBuffer;
+                            }
 
 
                             /*
@@ -412,6 +810,7 @@ app.use(
                             */
 
                             let baseUrl;
+
 
                             try {
 
@@ -434,419 +833,285 @@ app.use(
 
                             /*
                             ==================================================
-                            ① 强制重写 cdn-live.warthunder.com
+                            ① HTML / JS / JSON 中的绝对 URL
 
-                            例如：
-
-                            https://cdn-live.warthunder.com/abc.png
-
-                            →
-
-                            /__resource?url=https%3A%2F%2Fcdn-live...
+                            这是最重要的部分。
                             ==================================================
                             */
 
-                            html =
-                                html.replace(
-                                    /https?:\/\/cdn-live\.warthunder\.com\/[^\s"'<>\\)]+/gi,
-                                    (url) => {
-
-                                        try {
-
-                                            /*
-                                            去掉可能粘上的标点
-                                            */
-
-                                            const cleanUrl =
-                                                url.replace(
-                                                    /[),;]+$/,
-                                                    ""
-                                                );
-
-
-                                            return makeProxyUrl(
-                                                cleanUrl,
-                                                req
-                                            );
-
-                                        } catch {
-
-                                            return url;
-                                        }
-                                    }
-                                );
-
-
-                            /*
-                            ==================================================
-                            ② 重写所有允许域名的绝对 URL
-
-                            https://avatars.warthunder.com/...
-                            https://static.encyclopedia.warthunder.com/...
-                            ==================================================
-                            */
-
-                            html =
-                                html.replace(
-                                    /https?:\/\/[^"'\s<>]+/gi,
-                                    (url) => {
-
-                                        try {
-
-                                            const parsed =
-                                                new URL(
-                                                    url
-                                                );
-
-
-                                            if (
-                                                !isAllowedHost(
-                                                    parsed.hostname
-                                                )
-                                            ) {
-
-                                                return url;
-                                            }
-
-
-                                            /*
-                                            已经被转换成
-                                            /__resource
-                                            的不要再次处理
-                                            */
-
-                                            if (
-                                                url.includes(
-                                                    "/__resource?"
-                                                )
-                                            ) {
-
-                                                return url;
-                                            }
-
-
-                                            return makeProxyUrl(
-                                                url,
-                                                req
-                                            );
-
-                                        } catch {
-
-                                            return url;
-                                        }
-                                    }
-                                );
-
-
-                            /*
-                            ==================================================
-                            ③ //domain/path
-
-                            例如：
-
-                            //cdn-live.warthunder.com/xxx.png
-                            ==================================================
-                            */
-
-                            html =
-                                html.replace(
-                                    /(["'(=])\/\/([^"'\s<>]+)(\/[^"'\s<>]*)/gi,
-                                    (
-                                        match,
-                                        prefix,
-                                        hostname,
-                                        path
-                                    ) => {
-
-                                        if (
-                                            !isAllowedHost(
-                                                hostname
-                                            )
-                                        ) {
-
-                                            return match;
-                                        }
-
-
-                                        const original =
-                                            `https://${hostname}${path}`;
-
-
-                                        return (
-                                            prefix +
-                                            makeProxyUrl(
-                                                original,
-                                                req
-                                            )
-                                        );
-                                    }
-                                );
-
-
-                            /*
-                            ==================================================
-                            ④ src / href / poster / action
-
-                            处理：
-
-                            /image.png
-                            ./image.png
-                            ../image.png
-                            https://...
-                            ==================================================
-                            */
-
-                            html =
-                                html.replace(
-                                    /(src|href|poster|action)\s*=\s*(["'])(.*?)\2/gi,
-                                    (
-                                        match,
-                                        attribute,
-                                        quote,
-                                        value
-                                    ) => {
-
-                                        const trimmed =
-                                            value.trim();
-
-
-                                        /*
-                                        不处理特殊 URL
-                                        */
-
-                                        if (
-
-                                            trimmed.startsWith(
-                                                "#"
-                                            ) ||
-
-                                            trimmed.startsWith(
-                                                "data:"
-                                            ) ||
-
-                                            trimmed.startsWith(
-                                                "javascript:"
-                                            ) ||
-
-                                            trimmed.startsWith(
-                                                "mailto:"
-                                            ) ||
-
-                                            trimmed.startsWith(
-                                                "tel:"
-                                            )
-                                        ) {
-
-                                            return match;
-                                        }
-
-
-                                        /*
-                                        已经是 Proxy
-                                        */
-
-                                        if (
-                                            trimmed.startsWith(
-                                                "/__resource"
-                                            )
-                                        ) {
-
-                                            return match;
-                                        }
-
-
-                                        try {
-
-                                            const absolute =
-                                                new URL(
-                                                    trimmed,
-                                                    baseUrl
-                                                ).href;
-
-
-                                            if (
-                                                !/^https?:/i.test(
-                                                    absolute
-                                                )
-                                            ) {
-
-                                                return match;
-                                            }
-
-
-                                            const parsed =
-                                                new URL(
-                                                    absolute
-                                                );
-
-
-                                            if (
-                                                !isAllowedHost(
-                                                    parsed.hostname
-                                                )
-                                            ) {
-
-                                                return match;
-                                            }
-
-
-                                            return (
-                                                attribute +
-                                                "=" +
-                                                quote +
-                                                makeProxyUrl(
-                                                    absolute,
-                                                    req
-                                                ) +
-                                                quote
-                                            );
-
-                                        } catch {
-
-                                            return match;
-                                        }
-                                    }
-                                );
-
-
-                            /*
-                            ==================================================
-                            ⑤ srcset
-
-                            例如：
-
-                            image1.jpg 1x,
-                            image2.jpg 2x
-                            ==================================================
-                            */
-
-                            html =
-                                html.replace(
-                                    /(srcset)\s*=\s*(["'])(.*?)\2/gi,
-                                    (
-                                        match,
-                                        attribute,
-                                        quote,
-                                        value
-                                    ) => {
-
-                                        const items =
-                                            value.split(",");
-
-
-                                        const rewritten =
-                                            items.map(
-                                                item => {
-
-                                                    const parts =
-                                                        item
-                                                            .trim()
-                                                            .split(
-                                                                /\s+/
-                                                            );
-
-
-                                                    if (
-                                                        !parts[0]
-                                                    ) {
-
-                                                        return item;
-                                                    }
-
-
-                                                    try {
-
-                                                        const absolute =
-                                                            new URL(
-                                                                parts[0],
-                                                                baseUrl
-                                                            ).href;
-
-
-                                                        const parsed =
-                                                            new URL(
-                                                                absolute
-                                                            );
-
-
-                                                        if (
-                                                            !isAllowedHost(
-                                                                parsed.hostname
-                                                            )
-                                                        ) {
-
-                                                            return item;
-                                                        }
-
-
-                                                        parts[0] =
-                                                            makeProxyUrl(
-                                                                absolute,
-                                                                req
-                                                            );
-
-
-                                                        return parts.join(
-                                                            " "
-                                                        );
-
-                                                    } catch {
-
-                                                        return item;
-                                                    }
-                                                }
-                                            );
-
-
-                                        return (
-                                            attribute +
-                                            "=" +
-                                            quote +
-                                            rewritten.join(
-                                                ", "
-                                            ) +
-                                            quote
-                                        );
-                                    }
-                                );
-
-
-                            /*
-                            ==================================================
-                            ⑥ CSS url(...)
-
-                            background-image:
-                            url(...)
-                            ==================================================
-                            */
-
-                            html =
-                                rewriteCssUrls(
-                                    html,
-                                    baseUrl,
+                            text =
+                                rewriteTextUrls(
+                                    text,
                                     req
                                 );
 
 
                             /*
                             ==================================================
-                            删除压缩标记
-
-                            因为 HTML 已经被修改
+                            ② HTML src / href / poster / action
                             ==================================================
                             */
 
-                            delete proxyRes.headers[
-                                "content-encoding"
-                            ];
+                            if (
+                                isHtml
+                            ) {
+
+                                text =
+                                    text.replace(
+                                        /(src|href|poster|action)\s*=\s*(["'])(.*?)\2/gi,
+                                        (
+                                            match,
+                                            attribute,
+                                            quote,
+                                            value
+                                        ) => {
+
+                                            const trimmed =
+                                                value.trim();
+
+
+                                            /*
+                                            特殊 URL
+                                            */
+
+                                            if (
+
+                                                trimmed.startsWith(
+                                                    "#"
+                                                ) ||
+
+                                                trimmed.startsWith(
+                                                    "data:"
+                                                ) ||
+
+                                                trimmed.startsWith(
+                                                    "javascript:"
+                                                ) ||
+
+                                                trimmed.startsWith(
+                                                    "mailto:"
+                                                ) ||
+
+                                                trimmed.startsWith(
+                                                    "tel:"
+                                                )
+                                            ) {
+
+                                                return match;
+                                            }
+
+
+                                            /*
+                                            已经 Proxy
+                                            */
+
+                                            if (
+                                                trimmed.includes(
+                                                    "/__resource?"
+                                                )
+                                            ) {
+
+                                                return match;
+                                            }
+
+
+                                            try {
+
+                                                const absolute =
+                                                    new URL(
+                                                        trimmed,
+                                                        baseUrl
+                                                    ).href;
+
+
+                                                const rewritten =
+                                                    rewriteUrl(
+                                                        absolute,
+                                                        req
+                                                    );
+
+
+                                                if (
+                                                    rewritten ===
+                                                    absolute
+                                                ) {
+
+                                                    return match;
+                                                }
+
+
+                                                return (
+                                                    attribute +
+                                                    "=" +
+                                                    quote +
+                                                    rewritten +
+                                                    quote
+                                                );
+
+                                            } catch {
+
+                                                return match;
+                                            }
+                                        }
+                                    );
+
+
+                                /*
+                                ==================================================
+                                ③ srcset
+                                ==================================================
+                                */
+
+                                text =
+                                    text.replace(
+                                        /(srcset)\s*=\s*(["'])(.*?)\2/gi,
+                                        (
+                                            match,
+                                            attribute,
+                                            quote,
+                                            value
+                                        ) => {
+
+                                            const items =
+                                                value.split(
+                                                    ","
+                                                );
+
+
+                                            const rewritten =
+                                                items.map(
+                                                    item => {
+
+                                                        const parts =
+                                                            item
+                                                                .trim()
+                                                                .split(
+                                                                    /\s+/
+                                                                );
+
+
+                                                        if (
+                                                            !parts[0]
+                                                        ) {
+
+                                                            return item;
+                                                        }
+
+
+                                                        try {
+
+                                                            const absolute =
+                                                                new URL(
+                                                                    parts[0],
+                                                                    baseUrl
+                                                                ).href;
+
+
+                                                            const rewrittenUrl =
+                                                                rewriteUrl(
+                                                                    absolute,
+                                                                    req
+                                                                );
+
+
+                                                            if (
+                                                                rewrittenUrl ===
+                                                                absolute
+                                                            ) {
+
+                                                                return item;
+                                                            }
+
+
+                                                            parts[0] =
+                                                                rewrittenUrl;
+
+
+                                                            return parts.join(
+                                                                " "
+                                                            );
+
+                                                        } catch {
+
+                                                            return item;
+                                                        }
+                                                    }
+                                                );
+
+
+                                            return (
+                                                attribute +
+                                                "=" +
+                                                quote +
+                                                rewritten.join(
+                                                    ", "
+                                                ) +
+                                                quote
+                                            );
+                                        }
+                                    );
+
+
+                                /*
+                                ==================================================
+                                ④ inline CSS
+                                ==================================================
+                                */
+
+                                text =
+                                    rewriteCssUrls(
+                                        text,
+                                        baseUrl,
+                                        req
+                                    );
+                            }
 
 
                             /*
-                            返回修改后的 HTML
+                            ==================================================
+                            ⑤ CSS
+                            ==================================================
+                            */
+
+                            if (
+                                isCss
+                            ) {
+
+                                text =
+                                    rewriteCssUrls(
+                                        text,
+                                        baseUrl,
+                                        req
+                                    );
+                            }
+
+
+                            /*
+                            ==================================================
+                            删除压缩标记
+
+                            因为内容已经修改
+                            ==================================================
+                            */
+
+                            delete proxyRes
+                                .headers[
+                                    "content-encoding"
+                                ];
+
+
+                            delete proxyRes
+                                .headers[
+                                    "content-length"
+                                ];
+
+
+                            /*
+                            返回修改后的文本
                             */
 
                             return Buffer.from(
-                                html,
+                                text,
                                 "utf8"
                             );
                         }
@@ -854,9 +1119,9 @@ app.use(
 
                         /*
                         ==================================================
-                        图片 / SVG / CSS / JS / 字体等
+                        图片 / 字体 / 视频 / 其它二进制资源
 
-                        非 HTML 不修改
+                        不修改
                         ==================================================
                         */
 
@@ -870,114 +1135,7 @@ app.use(
 
 /*
 ==========================================================
-CSS URL 重写
-==========================================================
-*/
-
-function rewriteCssUrls(
-    text,
-    baseUrl,
-    req
-) {
-
-    return text.replace(
-        /url\(\s*(["']?)(.*?)\1\s*\)/gi,
-        (
-            match,
-            quote,
-            value
-        ) => {
-
-            const trimmed =
-                value.trim();
-
-
-            /*
-            data:image...
-            */
-
-            if (
-                trimmed.startsWith(
-                    "data:"
-                )
-            ) {
-
-                return match;
-            }
-
-
-            /*
-            #something
-            */
-
-            if (
-                trimmed.startsWith(
-                    "#"
-                )
-            ) {
-
-                return match;
-            }
-
-
-            /*
-            已经是 Proxy
-            */
-
-            if (
-                trimmed.startsWith(
-                    "/__resource"
-                )
-            ) {
-
-                return match;
-            }
-
-
-            try {
-
-                const absolute =
-                    new URL(
-                        trimmed,
-                        baseUrl
-                    ).href;
-
-
-                const parsed =
-                    new URL(
-                        absolute
-                    );
-
-
-                if (
-                    !isAllowedHost(
-                        parsed.hostname
-                    )
-                ) {
-
-                    return match;
-                }
-
-
-                return (
-                    `url("${makeProxyUrl(
-                        absolute,
-                        req
-                    )}")`
-                );
-
-            } catch {
-
-                return match;
-            }
-        }
-    );
-}
-
-
-/*
-==========================================================
-启动服务器
+启动
 ==========================================================
 */
 
@@ -987,15 +1145,18 @@ app.listen(
     () => {
 
         console.log(
-            `Proxy running on port ${PORT}`
+            "Proxy running on port " +
+            PORT
         );
 
         console.log(
-            `Target: ${TARGET}`
+            "Target: " +
+            TARGET
         );
 
         console.log(
-            `Port: ${PORT}`
+            "Port: " +
+            PORT
         );
     }
 );
