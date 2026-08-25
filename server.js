@@ -21,6 +21,8 @@ function isAllowedHost(hostname) {
     return (
         hostname === "warthunder.com" ||
         hostname.endsWith(".warthunder.com") ||
+        hostname === "encyclopedia.warthunder.com" ||
+        hostname.endsWith("encyclopedia.warthunder.com") ||
     );
 }
 
