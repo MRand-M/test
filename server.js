@@ -6,34 +6,95 @@ const {
 
 const app = express();
 
+/*
+ * ==========================================================
+ * 你只需要改这里
+ * ==========================================================
+ */
+
 const TARGET = "https://live.warthunder.com/";
+
 const PORT = process.env.PORT || 10000;
 
+
 /*
- * 允许的资源域名。
- *
- * 可以继续往这里添加 CDN / 图片服务器。
- * War Thunder 的子域名全部允许。
+ * ==========================================================
+ * 允许的资源域名
+ * ==========================================================
  */
+
 function isAllowedHost(hostname) {
+
     hostname = hostname.toLowerCase();
 
-    return (
+    /*
+     * TARGET 本身
+     */
+
+    let targetHost;
+
+    try {
+        targetHost = new URL(TARGET).hostname.toLowerCase();
+    } catch {
+        targetHost = "";
+    }
+
+    if (
+        hostname === targetHost ||
+        hostname.endsWith("." + targetHost)
+    ) {
+        return true;
+    }
+
+
+    /*
+     * War Thunder 相关 CDN / 图片 / Encyclopedia
+     */
+
+    if (
         hostname === "warthunder.com" ||
-        hostname.endsWith(".warthunder.com") ||
+        hostname.endsWith(".warthunder.com")
+    ) {
+        return true;
+    }
+
+
+    if (
         hostname === "encyclopedia.warthunder.com" ||
-        hostname.endsWith("encyclopedia.warthunder.com") ||
-    );
+        hostname.endsWith(".encyclopedia.warthunder.com")
+    ) {
+        return true;
+    }
+
+
+    /*
+     * 常见 War Thunder CDN
+     */
+
+    if (
+        hostname === "cdn-live.warthunder.com"
+    ) {
+        return true;
+    }
+
+
+    return false;
 }
 
+
 /*
- * 把外部资源 URL 转换成当前 Proxy 的 URL
+ * ==========================================================
+ * 把外部资源 URL 转换成 Proxy URL
+ * ==========================================================
  */
+
 function makeProxyUrl(url, req) {
+
     const protocol =
         req.headers["x-forwarded-proto"] || "https";
 
-    const host = req.headers.host;
+    const host =
+        req.headers.host;
 
     return (
         `${protocol}://${host}/__resource?url=` +
@@ -41,11 +102,15 @@ function makeProxyUrl(url, req) {
     );
 }
 
+
 /*
- * Health check
+ * ==========================================================
+ * Health Check
+ * ==========================================================
  */
+
 app.get("/health", (req, res) => {
-    res.send("OK");
+    res.status(200).send("OK");
 });
 
 
@@ -55,7 +120,7 @@ app.get("/health", (req, res) => {
  *
  * 例如：
  *
- * /__resource?url=https://avatars.warthunder.com/xxx.png
+ * /__resource?url=https://cdn-live.warthunder.com/xxx.png
  *
  * ==========================================================
  */
@@ -64,50 +129,85 @@ app.get("/__resource", async (req, res) => {
 
     try {
 
-        const target = req.query.url;
+        const target =
+            req.query.url;
 
         if (!target) {
-            return res.status(400).send("Missing URL");
+            return res
+                .status(400)
+                .send("Missing URL");
         }
 
-        const url = new URL(target);
+
+        const url =
+            new URL(target);
+
+
+        /*
+         * 检查域名
+         */
 
         if (!isAllowedHost(url.hostname)) {
-            return res.status(403).send("Domain not allowed");
+
+            return res
+                .status(403)
+                .send("Domain not allowed");
         }
 
-        console.log("Loading resource:", url.href);
 
-        const response = await fetch(url.href, {
-            method: "GET",
+        console.log(
+            "Loading resource:",
+            url.href
+        );
 
-            redirect: "follow",
 
-            headers: {
-                "User-Agent":
-                    req.headers["user-agent"] ||
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
+        /*
+         * 请求资源
+         */
 
-                "Accept":
-                    req.headers["accept"] ||
-                    "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        const response =
+            await fetch(
+                url.href,
+                {
+                    method: "GET",
 
-                "Accept-Language":
-                    req.headers["accept-language"] ||
-                    "en-US,en;q=0.9",
+                    redirect: "follow",
 
-                "Referer":
-                    TARGET.endsWith("/")
-                        ? TARGET
-                        : TARGET + "/"
-            }
-        });
+                    headers: {
+
+                        "User-Agent":
+                            req.headers["user-agent"] ||
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
+
+                        "Accept":
+                            req.headers["accept"] ||
+                            "*/*",
+
+                        "Accept-Language":
+                            req.headers["accept-language"] ||
+                            "en-US,en;q=0.9",
+
+                        "Referer":
+                            TARGET.endsWith("/")
+                                ? TARGET
+                                : TARGET + "/"
+                    }
+                }
+            );
+
 
         console.log(
             "Resource response:",
             response.status,
-            response.headers.get("content-type")
+            response.headers.get(
+                "content-type"
+            )
         );
+
+
+        /*
+         * CDN 返回错误
+         */
 
         if (!response.ok) {
 
@@ -118,25 +218,44 @@ app.get("/__resource", async (req, res) => {
                 );
         }
 
+
+        /*
+         * Content-Type
+         */
+
         const contentType =
-            response.headers.get("content-type");
+            response.headers.get(
+                "content-type"
+            );
 
         if (contentType) {
+
             res.setHeader(
                 "Content-Type",
                 contentType
             );
         }
 
+
+        /*
+         * Cache
+         */
+
         res.setHeader(
             "Cache-Control",
             "public, max-age=3600"
         );
 
+
+        /*
+         * 返回二进制内容
+         */
+
         const buffer =
             Buffer.from(
                 await response.arrayBuffer()
             );
+
 
         res.send(buffer);
 
@@ -147,7 +266,9 @@ app.get("/__resource", async (req, res) => {
             error
         );
 
+
         if (!res.headersSent) {
+
             res
                 .status(500)
                 .send("Resource error");
@@ -159,6 +280,22 @@ app.get("/__resource", async (req, res) => {
 /*
  * ==========================================================
  * 主网站 Proxy
+ * ==========================================================
+ *
+ * 例如：
+ *
+ * Render/
+ *       ↓
+ * TARGET/
+ *
+ * Render/collection
+ *       ↓
+ * TARGET/collection
+ *
+ * Render/cards/123
+ *       ↓
+ * TARGET/cards/123
+ *
  * ==========================================================
  */
 
@@ -178,391 +315,498 @@ app.use(
 
         selfHandleResponse: true,
 
+
         on: {
 
+            /*
+             * ======================================================
+             * 发给 TARGET 的请求
+             * ======================================================
+             */
+
             proxyReq(proxyReq) {
-            
+
                 if (proxyReq.destroyed) {
                     return;
                 }
-            
+
+
                 try {
-            
+
                     proxyReq.setHeader(
                         "Referer",
-                        TARGET + "/"
+                        TARGET.endsWith("/")
+                            ? TARGET
+                            : TARGET + "/"
                     );
-            
+
+
                     proxyReq.setHeader(
                         "Origin",
                         TARGET
                     );
-            
+
+
                     proxyReq.setHeader(
                         "User-Agent",
-                        "Mozilla/5.0"
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36"
                     );
-            
+
                 } catch (error) {
-            
+
                     console.error(
                         "proxyReq header error:",
                         error.message
                     );
-            
                 }
             },
 
 
-            proxyRes: responseInterceptor(
-                async (
-                    responseBuffer,
-                    proxyRes,
-                    req,
-                    res
-                ) => {
+            /*
+             * ======================================================
+             * TARGET 返回
+             * ======================================================
+             */
 
-                    const contentType =
-                        proxyRes.headers[
-                            "content-type"
-                        ] || "";
+            proxyRes:
+                responseInterceptor(
+                    async (
+                        responseBuffer,
+                        proxyRes,
+                        req,
+                        res
+                    ) => {
 
-
-                    /*
-                     * 只重写 HTML
-                     */
-
-                    if (
-                        contentType.includes(
-                            "text/html"
-                        )
-                    ) {
-
-                        let html =
-                            responseBuffer.toString(
-                                "utf8"
-                            );
-
-
-                        const protocol =
-                            req.headers[
-                                "x-forwarded-proto"
-                            ] || "https";
-
-                        const host =
-                            req.headers.host;
-
-                        const proxyBase =
-                            `${protocol}://${host}`;
+                        const contentType =
+                            proxyRes.headers[
+                                "content-type"
+                            ] || "";
 
 
                         /*
-                         * ------------------------------------------------
-                         * 绝对 URL
-                         *
-                         * https://avatars.warthunder.com/xxx.png
-                         * ------------------------------------------------
+                         * ==================================================
+                         * HTML
+                         * ==================================================
                          */
 
-                        html = html.replace(
-                            /https?:\/\/[^"'\s<>]+/gi,
-                            (url) => {
+                        if (
+                            contentType.includes(
+                                "text/html"
+                            )
+                        ) {
 
-                                try {
-
-                                    const parsed =
-                                        new URL(url);
-
-                                    if (
-                                        !isAllowedHost(
-                                            parsed.hostname
-                                        )
-                                    ) {
-                                        return url;
-                                    }
-
-                                    return makeProxyUrl(
-                                        url,
-                                        req
-                                    );
-
-                                } catch {
-
-                                    return url;
-                                }
-                            }
-                        );
-
-
-                        /*
-                         * ------------------------------------------------
-                         * //domain/path
-                         * ------------------------------------------------
-                         */
-
-                        html = html.replace(
-                            /(["'(=])\/\/([^"'\s<>]+)(\/[^"'\s<>]*)/gi,
-                            (
-                                match,
-                                prefix,
-                                hostname,
-                                path
-                            ) => {
-
-                                if (
-                                    !isAllowedHost(
-                                        hostname
-                                    )
-                                ) {
-                                    return match;
-                                }
-
-                                const original =
-                                    `https://${hostname}${path}`;
-
-                                return (
-                                    prefix +
-                                    makeProxyUrl(
-                                        original,
-                                        req
-                                    )
+                            let html =
+                                responseBuffer.toString(
+                                    "utf8"
                                 );
-                            }
-                        );
 
 
-                        /*
-                         * ------------------------------------------------
-                         * HTML 中的 src / href
-                         *
-                         * 处理相对资源：
-                         *
-                         * /images/test.png
-                         * ./image.png
-                         * ../image.png
-                         * ------------------------------------------------
-                         */
+                            /*
+                             * 当前 Proxy URL
+                             */
 
-                        const baseUrl =
-                            new URL(
-                                req.originalUrl.split("?")[0] || "/",
-                                TARGET
-                            );
+                            const protocol =
+                                req.headers[
+                                    "x-forwarded-proto"
+                                ] || "https";
 
 
-                        html = html.replace(
-                            /(src|href|poster|action)\s*=\s*(["'])(.*?)\2/gi,
-                            (
-                                match,
-                                attribute,
-                                quote,
-                                value
-                            ) => {
-
-                                const trimmed =
-                                    value.trim();
-
-                                if (
-                                    trimmed.startsWith(
-                                        "#"
-                                    ) ||
-                                    trimmed.startsWith(
-                                        "data:"
-                                    ) ||
-                                    trimmed.startsWith(
-                                        "javascript:"
-                                    ) ||
-                                    trimmed.startsWith(
-                                        "mailto:"
-                                    ) ||
-                                    trimmed.startsWith(
-                                        "tel:"
-                                    )
-                                ) {
-                                    return match;
-                                }
-
-                                /*
-                                 * 已经是 proxy URL
-                                 */
-                                if (
-                                    trimmed.startsWith(
-                                        "/__resource"
-                                    )
-                                ) {
-                                    return match;
-                                }
-
-                                try {
-
-                                    const absolute =
-                                        new URL(
-                                            trimmed,
-                                            baseUrl
-                                        ).href;
-
-                                    if (
-                                        !/^https?:/i.test(
-                                            absolute
-                                        )
-                                    ) {
-                                        return match;
-                                    }
-
-                                    const parsed =
-                                        new URL(
-                                            absolute
-                                        );
-
-                                    if (
-                                        !isAllowedHost(
-                                            parsed.hostname
-                                        )
-                                    ) {
-                                        return match;
-                                    }
-
-                                    return (
-                                        attribute +
-                                        "=" +
-                                        quote +
-                                        makeProxyUrl(
-                                            absolute,
-                                            req
-                                        ) +
-                                        quote
-                                    );
-
-                                } catch {
-
-                                    return match;
-                                }
-                            }
-                        );
+                            const host =
+                                req.headers.host;
 
 
-                        /*
-                         * ------------------------------------------------
-                         * srcset
-                         * ------------------------------------------------
-                         */
+                            /*
+                             * ==================================================
+                             * 绝对 URL
+                             *
+                             * https://cdn-live.warthunder.com/xxx.png
+                             * ==================================================
+                             */
 
-                        html = html.replace(
-                            /(srcset)\s*=\s*(["'])(.*?)\2/gi,
-                            (
-                                match,
-                                attribute,
-                                quote,
-                                value
-                            ) => {
-
-                                const items =
-                                    value.split(",");
-
-                                const rewritten =
-                                    items.map(item => {
-
-                                        const parts =
-                                            item
-                                                .trim()
-                                                .split(/\s+/);
-
-                                        if (
-                                            !parts[0]
-                                        ) {
-                                            return item;
-                                        }
+                            html =
+                                html.replace(
+                                    /https?:\/\/[^"'\s<>]+/gi,
+                                    (url) => {
 
                                         try {
 
-                                            const absolute =
-                                                new URL(
-                                                    parts[0],
-                                                    baseUrl
-                                                ).href;
-
                                             const parsed =
                                                 new URL(
-                                                    absolute
+                                                    url
                                                 );
+
 
                                             if (
                                                 !isAllowedHost(
                                                     parsed.hostname
                                                 )
                                             ) {
-                                                return item;
+
+                                                return url;
                                             }
 
-                                            parts[0] =
-                                                makeProxyUrl(
-                                                    absolute,
-                                                    req
-                                                );
 
-                                            return parts.join(
-                                                " "
+                                            return makeProxyUrl(
+                                                url,
+                                                req
                                             );
 
                                         } catch {
 
-                                            return item;
+                                            return url;
+                                        }
+                                    }
+                                );
+
+
+                            /*
+                             * ==================================================
+                             * //domain/path
+                             *
+                             * //cdn-live.warthunder.com/image.png
+                             * ==================================================
+                             */
+
+                            html =
+                                html.replace(
+                                    /(["'(=])\/\/([^"'\s<>]+)(\/[^"'\s<>]*)/gi,
+                                    (
+                                        match,
+                                        prefix,
+                                        hostname,
+                                        path
+                                    ) => {
+
+                                        if (
+                                            !isAllowedHost(
+                                                hostname
+                                            )
+                                        ) {
+
+                                            return match;
                                         }
 
-                                    });
 
-                                return (
-                                    attribute +
-                                    "=" +
-                                    quote +
-                                    rewritten.join(
-                                        ", "
-                                    ) +
-                                    quote
+                                        const original =
+                                            `https://${hostname}${path}`;
+
+
+                                        return (
+                                            prefix +
+                                            makeProxyUrl(
+                                                original,
+                                                req
+                                            )
+                                        );
+                                    }
                                 );
+
+
+                            /*
+                             * ==================================================
+                             * 页面当前 URL
+                             *
+                             * 例如：
+                             *
+                             * /collection
+                             *
+                             * 就以 TARGET/collection 作为相对路径基础
+                             * ==================================================
+                             */
+
+                            const requestPath =
+                                req.originalUrl ||
+                                "/";
+
+
+                            let baseUrl;
+
+
+                            try {
+
+                                baseUrl =
+                                    new URL(
+                                        requestPath,
+                                        TARGET
+                                    );
+
+                            } catch {
+
+                                baseUrl =
+                                    new URL(
+                                        "/",
+                                        TARGET
+                                    );
                             }
-                        );
+
+
+                            /*
+                             * ==================================================
+                             * src / href / poster / action
+                             *
+                             * 处理：
+                             *
+                             * /image.png
+                             * ./image.png
+                             * ../image.png
+                             * https://...
+                             * ==================================================
+                             */
+
+                            html =
+                                html.replace(
+                                    /(src|href|poster|action)\s*=\s*(["'])(.*?)\2/gi,
+                                    (
+                                        match,
+                                        attribute,
+                                        quote,
+                                        value
+                                    ) => {
+
+                                        const trimmed =
+                                            value.trim();
+
+
+                                        /*
+                                         * 不处理这些
+                                         */
+
+                                        if (
+
+                                            trimmed.startsWith(
+                                                "#"
+                                            ) ||
+
+                                            trimmed.startsWith(
+                                                "data:"
+                                            ) ||
+
+                                            trimmed.startsWith(
+                                                "javascript:"
+                                            ) ||
+
+                                            trimmed.startsWith(
+                                                "mailto:"
+                                            ) ||
+
+                                            trimmed.startsWith(
+                                                "tel:"
+                                            )
+                                        ) {
+
+                                            return match;
+                                        }
+
+
+                                        /*
+                                         * 已经是 Proxy
+                                         */
+
+                                        if (
+                                            trimmed.startsWith(
+                                                "/__resource"
+                                            )
+                                        ) {
+
+                                            return match;
+                                        }
+
+
+                                        try {
+
+                                            const absolute =
+                                                new URL(
+                                                    trimmed,
+                                                    baseUrl
+                                                ).href;
+
+
+                                            if (
+                                                !/^https?:/i.test(
+                                                    absolute
+                                                )
+                                            ) {
+
+                                                return match;
+                                            }
+
+
+                                            const parsed =
+                                                new URL(
+                                                    absolute
+                                                );
+
+
+                                            if (
+                                                !isAllowedHost(
+                                                    parsed.hostname
+                                                )
+                                            ) {
+
+                                                return match;
+                                            }
+
+
+                                            return (
+                                                attribute +
+                                                "=" +
+                                                quote +
+                                                makeProxyUrl(
+                                                    absolute,
+                                                    req
+                                                ) +
+                                                quote
+                                            );
+
+                                        } catch {
+
+                                            return match;
+                                        }
+                                    }
+                                );
+
+
+                            /*
+                             * ==================================================
+                             * srcset
+                             * ==================================================
+                             */
+
+                            html =
+                                html.replace(
+                                    /(srcset)\s*=\s*(["'])(.*?)\2/gi,
+                                    (
+                                        match,
+                                        attribute,
+                                        quote,
+                                        value
+                                    ) => {
+
+                                        const items =
+                                            value.split(",");
+
+
+                                        const rewritten =
+                                            items.map(
+                                                item => {
+
+                                                    const parts =
+                                                        item
+                                                            .trim()
+                                                            .split(
+                                                                /\s+/
+                                                            );
+
+
+                                                    if (
+                                                        !parts[0]
+                                                    ) {
+
+                                                        return item;
+                                                    }
+
+
+                                                    try {
+
+                                                        const absolute =
+                                                            new URL(
+                                                                parts[0],
+                                                                baseUrl
+                                                            ).href;
+
+
+                                                        const parsed =
+                                                            new URL(
+                                                                absolute
+                                                            );
+
+
+                                                        if (
+                                                            !isAllowedHost(
+                                                                parsed.hostname
+                                                            )
+                                                        ) {
+
+                                                            return item;
+                                                        }
+
+
+                                                        parts[0] =
+                                                            makeProxyUrl(
+                                                                absolute,
+                                                                req
+                                                            );
+
+
+                                                        return parts.join(
+                                                            " "
+                                                        );
+
+                                                    } catch {
+
+                                                        return item;
+                                                    }
+                                                }
+                                            );
+
+
+                                        return (
+                                            attribute +
+                                            "=" +
+                                            quote +
+                                            rewritten.join(
+                                                ", "
+                                            ) +
+                                            quote
+                                        );
+                                    }
+                                );
+
+
+                            /*
+                             * ==================================================
+                             * inline CSS
+                             *
+                             * background-image: url(...)
+                             * ==================================================
+                             */
+
+                            html =
+                                rewriteCssUrls(
+                                    html,
+                                    baseUrl,
+                                    req
+                                );
+
+
+                            /*
+                             * 我们已经重新生成 HTML
+                             * 删除压缩标记
+                             */
+
+                            delete proxyRes.headers[
+                                "content-encoding"
+                            ];
+
+
+                            return Buffer.from(
+                                html,
+                                "utf8"
+                            );
+                        }
 
 
                         /*
-                         * ------------------------------------------------
-                         * inline CSS
+                         * ==================================================
+                         * 图片 / SVG / CSS / JS / 字体等
                          *
-                         * url(...)
-                         * ------------------------------------------------
+                         * 原样返回
+                         * ==================================================
                          */
 
-                        html = rewriteCssUrls(
-                            html,
-                            baseUrl,
-                            req
-                        );
-
-
-                        /*
-                         * 禁止浏览器继续使用原来的压缩内容
-                         */
-
-                        delete proxyRes.headers[
-                            "content-encoding"
-                        ];
-
-
-                        return Buffer.from(
-                            html,
-                            "utf8"
-                        );
+                        return responseBuffer;
                     }
-
-
-                    /*
-                     * 图片 / SVG / JS / CSS 等
-                     * 不修改，直接返回
-                     */
-
-                    return responseBuffer;
-                }
-            )
+                )
         }
     })
 );
@@ -591,12 +835,24 @@ function rewriteCssUrls(
             const trimmed =
                 value.trim();
 
+
+            /*
+             * 不处理 data URL
+             */
+
             if (
-                trimmed.startsWith("data:") ||
-                trimmed.startsWith("#")
+                trimmed.startsWith(
+                    "data:"
+                ) ||
+
+                trimmed.startsWith(
+                    "#"
+                )
             ) {
+
                 return match;
             }
+
 
             try {
 
@@ -606,18 +862,22 @@ function rewriteCssUrls(
                         baseUrl
                     ).href;
 
+
                 const parsed =
                     new URL(
                         absolute
                     );
+
 
                 if (
                     !isAllowedHost(
                         parsed.hostname
                     )
                 ) {
+
                     return match;
                 }
+
 
                 return (
                     `url("${makeProxyUrl(
@@ -637,7 +897,7 @@ function rewriteCssUrls(
 
 /*
  * ==========================================================
- * Start
+ * Start Server
  * ==========================================================
  */
 
@@ -645,8 +905,17 @@ app.listen(
     PORT,
     "0.0.0.0",
     () => {
+
         console.log(
             `Proxy running on port ${PORT}`
+        );
+
+        console.log(
+            `Target: ${TARGET}`
+        );
+
+        console.log(
+            `Port: ${PORT}`
         );
     }
 );
