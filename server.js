@@ -16,7 +16,14 @@ const PORT = process.env.PORT || 10000;
  * War Thunder 的子域名全部允许。
  */
 function isAllowedHost(hostname) {
-    return true;
+    hostname = hostname.toLowerCase();
+
+    return (
+        hostname === "warthunder.com" ||
+        hostname.endsWith(".warthunder.com") ||
+        hostname === "encyclopedia.warthunder.com" ||
+        hostname.endsWith(".encyclopedia.warthunder.com")
+    );
 }
 
 /*
