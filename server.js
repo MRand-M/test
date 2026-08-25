@@ -6,7 +6,7 @@ const {
 
 const app = express();
 
-const TARGET = "https://live.warthunder.com/";
+const TARGET = "https://live.warthunder.com";
 const PORT = process.env.PORT || 10000;
 
 /*
@@ -21,8 +21,6 @@ function isAllowedHost(hostname) {
     return (
         hostname === "warthunder.com" ||
         hostname.endsWith(".warthunder.com") ||
-        hostname === "cdn-live.warthunder.com" ||
-        hostname.endsWith(".cdn-live.warthunder.com")
     );
 }
 
