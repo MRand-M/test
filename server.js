@@ -7,37 +7,55 @@ const {
 const app = express();
 
 /*
- * ==========================================================
- * 你只需要改这里
- * ==========================================================
- */
+==========================================================
+TARGET
+==========================================================
+只需要改这里。
 
-const TARGET = "https://live.warthunder.com/";
+例如：
+
+const TARGET = "https://1939.giaory.xyz";
+
+或者：
+
+const TARGET = "https://live.warthunder.com";
+*/
+
+const TARGET = "https://live.warthunder.com";
+
+
+/*
+==========================================================
+PORT
+==========================================================
+*/
 
 const PORT = process.env.PORT || 10000;
 
 
 /*
- * ==========================================================
- * 允许的资源域名
- * ==========================================================
- */
+==========================================================
+允许访问的资源域名
+==========================================================
+*/
 
 function isAllowedHost(hostname) {
 
     hostname = hostname.toLowerCase();
 
-    /*
-     * TARGET 本身
-     */
-
-    let targetHost;
+    let targetHost = "";
 
     try {
-        targetHost = new URL(TARGET).hostname.toLowerCase();
+        targetHost =
+            new URL(TARGET).hostname.toLowerCase();
     } catch {
         targetHost = "";
     }
+
+
+    /*
+    TARGET 本身以及它的子域名
+    */
 
     if (
         hostname === targetHost ||
@@ -48,8 +66,8 @@ function isAllowedHost(hostname) {
 
 
     /*
-     * War Thunder 相关 CDN / 图片 / Encyclopedia
-     */
+    War Thunder 所有子域名
+    */
 
     if (
         hostname === "warthunder.com" ||
@@ -59,17 +77,23 @@ function isAllowedHost(hostname) {
     }
 
 
+    /*
+    Encyclopedia
+    */
+
     if (
         hostname === "encyclopedia.warthunder.com" ||
-        hostname.endsWith(".encyclopedia.warthunder.com")
+        hostname.endsWith(
+            ".encyclopedia.warthunder.com"
+        )
     ) {
         return true;
     }
 
 
     /*
-     * 常见 War Thunder CDN
-     */
+    CDN
+    */
 
     if (
         hostname === "cdn-live.warthunder.com"
@@ -83,15 +107,16 @@ function isAllowedHost(hostname) {
 
 
 /*
- * ==========================================================
- * 把外部资源 URL 转换成 Proxy URL
- * ==========================================================
- */
+==========================================================
+生成资源 Proxy URL
+==========================================================
+*/
 
 function makeProxyUrl(url, req) {
 
     const protocol =
-        req.headers["x-forwarded-proto"] || "https";
+        req.headers["x-forwarded-proto"] ||
+        "https";
 
     const host =
         req.headers.host;
@@ -104,26 +129,30 @@ function makeProxyUrl(url, req) {
 
 
 /*
- * ==========================================================
- * Health Check
- * ==========================================================
- */
+==========================================================
+Health Check
+==========================================================
+*/
 
 app.get("/health", (req, res) => {
-    res.status(200).send("OK");
+
+    res
+        .status(200)
+        .send("OK");
 });
 
 
 /*
- * ==========================================================
- * 外部资源 Proxy
- *
- * 例如：
- *
- * /__resource?url=https://cdn-live.warthunder.com/xxx.png
- *
- * ==========================================================
- */
+==========================================================
+资源代理
+==========================================================
+
+例如：
+
+/__resource?url=https://cdn-live.warthunder.com/xxx.png
+
+==========================================================
+*/
 
 app.get("/__resource", async (req, res) => {
 
@@ -132,7 +161,9 @@ app.get("/__resource", async (req, res) => {
         const target =
             req.query.url;
 
+
         if (!target) {
+
             return res
                 .status(400)
                 .send("Missing URL");
@@ -144,10 +175,14 @@ app.get("/__resource", async (req, res) => {
 
 
         /*
-         * 检查域名
-         */
+        检查域名
+        */
 
-        if (!isAllowedHost(url.hostname)) {
+        if (
+            !isAllowedHost(
+                url.hostname
+            )
+        ) {
 
             return res
                 .status(403)
@@ -162,8 +197,8 @@ app.get("/__resource", async (req, res) => {
 
 
         /*
-         * 请求资源
-         */
+        请求资源
+        */
 
         const response =
             await fetch(
@@ -206,8 +241,8 @@ app.get("/__resource", async (req, res) => {
 
 
         /*
-         * CDN 返回错误
-         */
+        如果资源请求失败
+        */
 
         if (!response.ok) {
 
@@ -220,8 +255,8 @@ app.get("/__resource", async (req, res) => {
 
 
         /*
-         * Content-Type
-         */
+        Content-Type
+        */
 
         const contentType =
             response.headers.get(
@@ -238,8 +273,8 @@ app.get("/__resource", async (req, res) => {
 
 
         /*
-         * Cache
-         */
+        缓存
+        */
 
         res.setHeader(
             "Cache-Control",
@@ -248,8 +283,8 @@ app.get("/__resource", async (req, res) => {
 
 
         /*
-         * 返回二进制内容
-         */
+        返回二进制内容
+        */
 
         const buffer =
             Buffer.from(
@@ -271,33 +306,33 @@ app.get("/__resource", async (req, res) => {
 
             res
                 .status(500)
-                .send("Resource error");
+                .send(
+                    "Resource error"
+                );
         }
     }
 });
 
 
 /*
- * ==========================================================
- * 主网站 Proxy
- * ==========================================================
- *
- * 例如：
- *
- * Render/
- *       ↓
- * TARGET/
- *
- * Render/collection
- *       ↓
- * TARGET/collection
- *
- * Render/cards/123
- *       ↓
- * TARGET/cards/123
- *
- * ==========================================================
- */
+==========================================================
+主网站 Proxy
+==========================================================
+
+/
+    ↓
+TARGET/
+
+ /collection
+    ↓
+TARGET/collection
+
+ /cards
+    ↓
+TARGET/cards
+
+==========================================================
+*/
 
 app.use(
     "/",
@@ -319,10 +354,23 @@ app.use(
         on: {
 
             /*
-             * ======================================================
-             * TARGET 返回
-             * ======================================================
-             */
+            ==================================================
+            不再修改 proxyReq headers
+
+            之前这里的 setHeader 会导致：
+
+            ERR_HTTP_HEADERS_SENT
+
+            所以这里故意不放 proxyReq。
+            ==================================================
+            */
+
+
+            /*
+            ==================================================
+            TARGET 返回
+            ==================================================
+            */
 
             proxyRes:
                 responseInterceptor(
@@ -340,10 +388,10 @@ app.use(
 
 
                         /*
-                         * ==================================================
-                         * HTML
-                         * ==================================================
-                         */
+                        ==================================================
+                        HTML
+                        ==================================================
+                        */
 
                         if (
                             contentType.includes(
@@ -358,26 +406,85 @@ app.use(
 
 
                             /*
-                             * 当前 Proxy URL
-                             */
+                            ==================================================
+                            当前页面 URL
+                            ==================================================
+                            */
 
-                            const protocol =
-                                req.headers[
-                                    "x-forwarded-proto"
-                                ] || "https";
+                            let baseUrl;
 
+                            try {
 
-                            const host =
-                                req.headers.host;
+                                baseUrl =
+                                    new URL(
+                                        req.originalUrl ||
+                                        "/",
+                                        TARGET
+                                    );
+
+                            } catch {
+
+                                baseUrl =
+                                    new URL(
+                                        "/",
+                                        TARGET
+                                    );
+                            }
 
 
                             /*
-                             * ==================================================
-                             * 绝对 URL
-                             *
-                             * https://cdn-live.warthunder.com/xxx.png
-                             * ==================================================
-                             */
+                            ==================================================
+                            ① 强制重写 cdn-live.warthunder.com
+
+                            例如：
+
+                            https://cdn-live.warthunder.com/abc.png
+
+                            →
+
+                            /__resource?url=https%3A%2F%2Fcdn-live...
+                            ==================================================
+                            */
+
+                            html =
+                                html.replace(
+                                    /https?:\/\/cdn-live\.warthunder\.com\/[^\s"'<>\\)]+/gi,
+                                    (url) => {
+
+                                        try {
+
+                                            /*
+                                            去掉可能粘上的标点
+                                            */
+
+                                            const cleanUrl =
+                                                url.replace(
+                                                    /[),;]+$/,
+                                                    ""
+                                                );
+
+
+                                            return makeProxyUrl(
+                                                cleanUrl,
+                                                req
+                                            );
+
+                                        } catch {
+
+                                            return url;
+                                        }
+                                    }
+                                );
+
+
+                            /*
+                            ==================================================
+                            ② 重写所有允许域名的绝对 URL
+
+                            https://avatars.warthunder.com/...
+                            https://static.encyclopedia.warthunder.com/...
+                            ==================================================
+                            */
 
                             html =
                                 html.replace(
@@ -402,6 +509,22 @@ app.use(
                                             }
 
 
+                                            /*
+                                            已经被转换成
+                                            /__resource
+                                            的不要再次处理
+                                            */
+
+                                            if (
+                                                url.includes(
+                                                    "/__resource?"
+                                                )
+                                            ) {
+
+                                                return url;
+                                            }
+
+
                                             return makeProxyUrl(
                                                 url,
                                                 req
@@ -416,12 +539,14 @@ app.use(
 
 
                             /*
-                             * ==================================================
-                             * //domain/path
-                             *
-                             * //cdn-live.warthunder.com/image.png
-                             * ==================================================
-                             */
+                            ==================================================
+                            ③ //domain/path
+
+                            例如：
+
+                            //cdn-live.warthunder.com/xxx.png
+                            ==================================================
+                            */
 
                             html =
                                 html.replace(
@@ -459,55 +584,17 @@ app.use(
 
 
                             /*
-                             * ==================================================
-                             * 页面当前 URL
-                             *
-                             * 例如：
-                             *
-                             * /collection
-                             *
-                             * 就以 TARGET/collection 作为相对路径基础
-                             * ==================================================
-                             */
+                            ==================================================
+                            ④ src / href / poster / action
 
-                            const requestPath =
-                                req.originalUrl ||
-                                "/";
+                            处理：
 
-
-                            let baseUrl;
-
-
-                            try {
-
-                                baseUrl =
-                                    new URL(
-                                        requestPath,
-                                        TARGET
-                                    );
-
-                            } catch {
-
-                                baseUrl =
-                                    new URL(
-                                        "/",
-                                        TARGET
-                                    );
-                            }
-
-
-                            /*
-                             * ==================================================
-                             * src / href / poster / action
-                             *
-                             * 处理：
-                             *
-                             * /image.png
-                             * ./image.png
-                             * ../image.png
-                             * https://...
-                             * ==================================================
-                             */
+                            /image.png
+                            ./image.png
+                            ../image.png
+                            https://...
+                            ==================================================
+                            */
 
                             html =
                                 html.replace(
@@ -524,8 +611,8 @@ app.use(
 
 
                                         /*
-                                         * 不处理这些
-                                         */
+                                        不处理特殊 URL
+                                        */
 
                                         if (
 
@@ -555,8 +642,8 @@ app.use(
 
 
                                         /*
-                                         * 已经是 Proxy
-                                         */
+                                        已经是 Proxy
+                                        */
 
                                         if (
                                             trimmed.startsWith(
@@ -623,10 +710,15 @@ app.use(
 
 
                             /*
-                             * ==================================================
-                             * srcset
-                             * ==================================================
-                             */
+                            ==================================================
+                            ⑤ srcset
+
+                            例如：
+
+                            image1.jpg 1x,
+                            image2.jpg 2x
+                            ==================================================
+                            */
 
                             html =
                                 html.replace(
@@ -720,12 +812,13 @@ app.use(
 
 
                             /*
-                             * ==================================================
-                             * inline CSS
-                             *
-                             * background-image: url(...)
-                             * ==================================================
-                             */
+                            ==================================================
+                            ⑥ CSS url(...)
+
+                            background-image:
+                            url(...)
+                            ==================================================
+                            */
 
                             html =
                                 rewriteCssUrls(
@@ -736,14 +829,21 @@ app.use(
 
 
                             /*
-                             * 我们已经重新生成 HTML
-                             * 删除压缩标记
-                             */
+                            ==================================================
+                            删除压缩标记
+
+                            因为 HTML 已经被修改
+                            ==================================================
+                            */
 
                             delete proxyRes.headers[
                                 "content-encoding"
                             ];
 
+
+                            /*
+                            返回修改后的 HTML
+                            */
 
                             return Buffer.from(
                                 html,
@@ -753,12 +853,12 @@ app.use(
 
 
                         /*
-                         * ==================================================
-                         * 图片 / SVG / CSS / JS / 字体等
-                         *
-                         * 原样返回
-                         * ==================================================
-                         */
+                        ==================================================
+                        图片 / SVG / CSS / JS / 字体等
+
+                        非 HTML 不修改
+                        ==================================================
+                        */
 
                         return responseBuffer;
                     }
@@ -769,10 +869,10 @@ app.use(
 
 
 /*
- * ==========================================================
- * CSS url(...) 重写
- * ==========================================================
- */
+==========================================================
+CSS URL 重写
+==========================================================
+*/
 
 function rewriteCssUrls(
     text,
@@ -793,16 +893,40 @@ function rewriteCssUrls(
 
 
             /*
-             * 不处理 data URL
-             */
+            data:image...
+            */
 
             if (
                 trimmed.startsWith(
                     "data:"
-                ) ||
+                )
+            ) {
 
+                return match;
+            }
+
+
+            /*
+            #something
+            */
+
+            if (
                 trimmed.startsWith(
                     "#"
+                )
+            ) {
+
+                return match;
+            }
+
+
+            /*
+            已经是 Proxy
+            */
+
+            if (
+                trimmed.startsWith(
+                    "/__resource"
                 )
             ) {
 
@@ -852,10 +976,10 @@ function rewriteCssUrls(
 
 
 /*
- * ==========================================================
- * Start Server
- * ==========================================================
- */
+==========================================================
+启动服务器
+==========================================================
+*/
 
 app.listen(
     PORT,
