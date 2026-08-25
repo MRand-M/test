@@ -6,7 +6,7 @@ const {
 
 const app = express();
 
-const TARGET = "https://live.warthunder.com/";
+const TARGET = "https://cdn-live.warthunder.com/uploads/14/9a/df/32087361c02032d9d7312318cceef1a839_lq/%D0%B8%D0%B7%D0%BE%D0%B1%D1%80%D0%B0%D0%B6%D0%B5%D0%BD%D0%B8%D0%B5_2026-08-21_223517492.png";
 const PORT = process.env.PORT || 10000;
 
 /*
