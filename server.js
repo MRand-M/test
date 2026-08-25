@@ -320,50 +320,6 @@ app.use(
 
             /*
              * ======================================================
-             * 发给 TARGET 的请求
-             * ======================================================
-             */
-
-            proxyReq(proxyReq) {
-
-                if (proxyReq.destroyed) {
-                    return;
-                }
-
-
-                try {
-
-                    proxyReq.setHeader(
-                        "Referer",
-                        TARGET.endsWith("/")
-                            ? TARGET
-                            : TARGET + "/"
-                    );
-
-
-                    proxyReq.setHeader(
-                        "Origin",
-                        TARGET
-                    );
-
-
-                    proxyReq.setHeader(
-                        "User-Agent",
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36"
-                    );
-
-                } catch (error) {
-
-                    console.error(
-                        "proxyReq header error:",
-                        error.message
-                    );
-                }
-            },
-
-
-            /*
-             * ======================================================
              * TARGET 返回
              * ======================================================
              */
