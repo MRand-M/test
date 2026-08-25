@@ -76,22 +76,46 @@ app.get("/__resource", async (req, res) => {
             return res.status(403).send("Domain not allowed");
         }
 
+        console.log("Loading resource:", url.href);
+
         const response = await fetch(url.href, {
+            method: "GET",
+
             redirect: "follow",
+
             headers: {
                 "User-Agent":
                     req.headers["user-agent"] ||
-                    "Mozilla/5.0",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
+
+                "Accept":
+                    req.headers["accept"] ||
+                    "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+
+                "Accept-Language":
+                    req.headers["accept-language"] ||
+                    "en-US,en;q=0.9",
 
                 "Referer":
-                    TARGET + "/"
+                    TARGET.endsWith("/")
+                        ? TARGET
+                        : TARGET + "/"
             }
         });
 
+        console.log(
+            "Resource response:",
+            response.status,
+            response.headers.get("content-type")
+        );
+
         if (!response.ok) {
+
             return res
                 .status(response.status)
-                .send(`Resource returned ${response.status}`);
+                .send(
+                    `Resource returned ${response.status}`
+                );
         }
 
         const contentType =
@@ -123,7 +147,11 @@ app.get("/__resource", async (req, res) => {
             error
         );
 
-        res.status(500).send("Resource error");
+        if (!res.headersSent) {
+            res
+                .status(500)
+                .send("Resource error");
+        }
     }
 });
 
