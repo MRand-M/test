@@ -146,21 +146,36 @@ app.use(
         on: {
 
             proxyReq(proxyReq) {
-
-                proxyReq.setHeader(
-                    "Referer",
-                    TARGET + "/"
-                );
-
-                proxyReq.setHeader(
-                    "Origin",
-                    TARGET
-                );
-
-                proxyReq.setHeader(
-                    "User-Agent",
-                    "Mozilla/5.0"
-                );
+            
+                if (proxyReq.destroyed) {
+                    return;
+                }
+            
+                try {
+            
+                    proxyReq.setHeader(
+                        "Referer",
+                        TARGET + "/"
+                    );
+            
+                    proxyReq.setHeader(
+                        "Origin",
+                        TARGET
+                    );
+            
+                    proxyReq.setHeader(
+                        "User-Agent",
+                        "Mozilla/5.0"
+                    );
+            
+                } catch (error) {
+            
+                    console.error(
+                        "proxyReq header error:",
+                        error.message
+                    );
+            
+                }
             },
 
 
