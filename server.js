@@ -25,7 +25,7 @@ const TARGET = "https://1939.giaory.xyz";
 ==========================================================
 */
 
-const TARGET = "https://live.warthunder.com/";
+const TARGET = "https://https://play.unity.com/en/games/6c1d1a45-0824-44d8-aa30-9d315f0dc407/war-thunder-armored-assault-ps1";
 
 
 /*
