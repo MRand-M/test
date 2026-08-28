@@ -25,7 +25,7 @@ const TARGET = "https://1939.giaory.xyz";
 ==========================================================
 */
 
-const TARGET = "https://www.reddit.com/r/kards/comments/1fovdow/what_is_the_font_used_in_kards/";
+const TARGET = "https://discord.com";
 
 
 /*
