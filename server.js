@@ -25,7 +25,7 @@ const TARGET = "https://1939.giaory.xyz";
 ==========================================================
 */
 
-const TARGET = "https://wiki.warthunder.com";
+const TARGET = "https://1939.giaory.xyz";
 
 
 /*
