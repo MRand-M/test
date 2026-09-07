@@ -25,7 +25,7 @@ const TARGET = "https://1939.giaory.xyz";
 ==========================================================
 */
 
-const TARGET = "https://discord.com/channels/1496706963470553179/1496718113797046382";
+const TARGET = "https://live.warthunder.com";
 
 
 /*
