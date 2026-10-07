@@ -25,7 +25,7 @@ const TARGET = "https://1939.giaory.xyz";
 ==========================================================
 */
 
-const TARGET = "https://heytai.com";
+const TARGET = "https://hentaicity.com";
 
 
 /*
