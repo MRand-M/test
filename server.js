@@ -25,7 +25,7 @@ const TARGET = "https://1939.giaory.xyz";
 ==========================================================
 */
 
-const TARGET = "https://18comic.ink";
+const TARGET = "https://comic18j-ada.work";
 
 
 /*
