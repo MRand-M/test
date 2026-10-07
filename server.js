@@ -11,21 +11,9 @@ const app = express();
 ==========================================================
 TARGET
 ==========================================================
-
-你以后只需要改这一行。
-
-例如：
-
-const TARGET = "https://live.warthunder.com";
-
-或者：
-
-const TARGET = "https://1939.giaory.xyz";
-
-==========================================================
 */
 
-const TARGET = "https://e-hentai.org";
+const TARGET = "https://wiki.warthunder.com";
 
 
 /*
