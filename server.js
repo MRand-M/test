@@ -13,7 +13,7 @@ TARGET
 ==========================================================
 */
 
-const TARGET = "https://1939.kardsdecker.com";
+const TARGET = "https://miruro.ro";
 
 
 /*
