@@ -13,7 +13,7 @@ TARGET
 ==========================================================
 */
 
-const TARGET = "https://videasy.to";
+const TARGET = "https://vidfast.net";
 
 
 /*
