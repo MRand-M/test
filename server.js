@@ -13,7 +13,7 @@ TARGET
 ==========================================================
 */
 
-const TARGET = "https://greasyfork.org";
+const TARGET = "https://miruro.ro";
 
 
 /*
