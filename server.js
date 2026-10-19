@@ -84,9 +84,9 @@ function isAllowedHost(hostname) {
     */
 
     if (
-        hostname === "warthunder.com" ||
-        hostname.endsWith(
-            ".warthunder.com"
+        hostname === "ehgt.org" ||
+        hostname.startswith(
+            "ehgt.org"
         )
     ) {
         return true;
