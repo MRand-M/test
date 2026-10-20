@@ -721,6 +721,11 @@ app.use(
                                 ""
                             ).toLowerCase();
 
+                        console.log("========== NAVIGATION DEBUG ==========");
+                        console.log("Browser URL:", req.originalUrl);
+                        console.log("Upstream status:", proxyRes.statusCode);
+                        console.log("Upstream Location:", proxyRes.headers.location);
+                        console.log("Content-Type:", contentType);
 
                         /*
                         ==================================================
