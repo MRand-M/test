@@ -84,7 +84,7 @@ function isAllowedHost(hostname) {
     */
 
     if (
-        hostname === ".ehgt.org" ||
+        hostname === "ehgt.org" ||
         hostname.startsWith(
             ".ehgt.org"
         )
@@ -99,7 +99,7 @@ function isAllowedHost(hostname) {
 
     if (
         hostname ===
-            ".zurswtyclg.hath.network" ||
+            "zurswtyclg.hath.network" ||
 
         hostname.startsWith(
             ".zurswtyclg.hath.network"
