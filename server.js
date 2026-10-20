@@ -826,11 +826,11 @@ app.use(
                             ==================================================
                             */
 
-                            text =
-                                rewriteTextUrls(
-                                    text,
-                                    req
-                                );
+                            // HTML 中的链接需要保留原网站地址，
+                            // 避免点击网页链接时进入 /__resource。
+                            if (!isHtml) {
+                                text = rewriteTextUrls(text, req);
+                            }
 
 
                             /*
@@ -845,7 +845,7 @@ app.use(
 
                                 text =
                                     text.replace(
-                                        /(src|href|poster|action)\s*=\s*(["'])(.*?)\2/gi,
+                                        /(src|poster)\s*=\s*(["'])(.*?)\2/gi
                                         (
                                             match,
                                             attribute,
