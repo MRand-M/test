@@ -13,7 +13,7 @@ TARGET
 ==========================================================
 */
 
-const TARGET = "https://e-hentai.org";
+const TARGET = "https://wiki.warthunder.com";
 
 
 /*
@@ -84,8 +84,8 @@ function isAllowedHost(hostname) {
     */
 
     if (
-        hostname === ".ehgt.org" ||
-        hostname.startsWith(
+        hostname === ".warthunder.com" ||
+        hostname.startswith(
             ".ehgt.org"
         )
     ) {
@@ -99,10 +99,10 @@ function isAllowedHost(hostname) {
 
     if (
         hostname ===
-            ".zurswtyclg.hath.network" ||
+            ".encyclopedia.warthunder.com" ||
 
         hostname.startsWith(
-            ".zurswtyclg.hath.network"
+            ".encyclopedia.warthunder.com"
         )
     ) {
         return true;
@@ -721,11 +721,6 @@ app.use(
                                 ""
                             ).toLowerCase();
 
-                        console.log("========== NAVIGATION DEBUG ==========");
-                        console.log("Browser URL:", req.originalUrl);
-                        console.log("Upstream status:", proxyRes.statusCode);
-                        console.log("Upstream Location:", proxyRes.headers.location);
-                        console.log("Content-Type:", contentType);
 
                         /*
                         ==================================================
