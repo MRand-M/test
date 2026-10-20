@@ -99,10 +99,10 @@ function isAllowedHost(hostname) {
 
     if (
         hostname ===
-            "encyclopedia.warthunder.com" ||
+            "ehgt.org" ||
 
         hostname.endsWith(
-            ".encyclopedia.warthunder.com"
+            ".ehgt.org"
         )
     ) {
         return true;
