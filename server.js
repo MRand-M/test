@@ -143,6 +143,21 @@ function makeProxyUrl(
     );
 }
 
+function makeLocalPageUrl(originalUrl, req) {
+    const parsed = new URL(originalUrl);
+
+    const protocol =
+        req.headers["x-forwarded-proto"] || "https";
+
+    const host = req.headers.host;
+
+    return (
+        `${protocol}://${host}` +
+        parsed.pathname +
+        parsed.search +
+        parsed.hash
+    );
+}
 
 /*
 ==========================================================
@@ -150,51 +165,28 @@ function makeProxyUrl(
 ==========================================================
 */
 
-function rewriteUrl(
-    url,
-    req
-) {
-
+function rewriteUrl(url, req) {
     try {
-
-        /*
-        如果已经是我们的 Proxy
-        不要重复处理
-        */
-
-        if (
-            url.includes(
-                "/__resource?"
-            )
-        ) {
+        if (url.includes("/__resource?")) {
             return url;
         }
 
+        const parsed = new URL(url);
 
-        const parsed =
-            new URL(url);
-
-
-        /*
-        只处理允许的域名
-        */
-
-        if (
-            !isAllowedHost(
-                parsed.hostname
-            )
-        ) {
+        if (!isAllowedHost(parsed.hostname)) {
             return url;
         }
 
+        // 目标网站本身：保留网页路径，
+        // 让浏览器继续访问代理服务器的正常路由。
+        if (parsed.hostname === TARGET_HOST) {
+            return makeLocalPageUrl(url, req);
+        }
 
-        return makeProxyUrl(
-            url,
-            req
-        );
+        // 其他允许的子域名：作为资源处理。
+        return makeProxyUrl(url, req);
 
     } catch {
-
         return url;
     }
 }
