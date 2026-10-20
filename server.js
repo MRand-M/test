@@ -845,7 +845,7 @@ app.use(
 
                                 text =
                                     text.replace(
-                                        /(src|poster)\s*=\s*(["'])(.*?)\2/gi
+                                        /(src|poster)\s*=\s*(["'])(.*?)\2/gi,
                                         (
                                             match,
                                             attribute,
