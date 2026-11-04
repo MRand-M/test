@@ -50,68 +50,8 @@ cdn-live.warthunder.com
 */
 
 function isAllowedHost(hostname) {
-
-    hostname =
-        hostname.toLowerCase();
-
-
-    /*
-    TARGET 本身
-    */
-
-    if (
-        hostname === TARGET_HOST
-    ) {
-        return true;
-    }
-
-
-    /*
-    TARGET 子域名
-    */
-
-    if (
-        hostname.endsWith(
-            "." + TARGET_HOST
-        )
-    ) {
-        return true;
-    }
-
-
-    /*
-    War Thunder
-    */
-
-    if (
-        hostname === "ehgt.org" ||
-        hostname.startsWith(
-            ".ehgt.org"
-        )
-    ) {
-        return true;
-    }
-
-
-    /*
-    Encyclopedia
-    */
-
-    if (
-        hostname ===
-            "hath.network" ||
-
-        hostname.startsWith(
-            ".hath.network"
-        )
-    ) {
-        return true;
-    }
-
-
-    return false;
+    return true;
 }
-
 
 /*
 ==========================================================
